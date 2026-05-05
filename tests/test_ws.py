@@ -51,6 +51,39 @@ def test_friend_room_creation_and_join():
             assert host_start["board"] == guest_start["board"]
 
 
+def test_default_nickname_when_empty():
+    """Server assigns Player-XXXX when client sends empty nickname."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello", "intent": "solo"})
+        joined = ws.receive_json()
+        assert joined["type"] == "joined"
+        nick = joined["room"]["players"][0]["nickname"]
+        assert nick.startswith("Player-")
+
+
+def test_rename_broadcasts_to_room():
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host:
+        host.send_json({"type": "hello", "intent": "create"})
+        host_joined = host.receive_json()
+        room_id = host_joined["room"]["id"]
+
+        with client.websocket_connect("/ws") as guest:
+            guest.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest.receive_json()  # joined
+            host.receive_json()   # peer_joined
+
+            host.send_json({"type": "rename", "nickname": "AppleKing"})
+            # Both sides should receive 'renamed'
+            host_msg = host.receive_json()
+            guest_msg = guest.receive_json()
+            assert host_msg["type"] == "renamed"
+            assert host_msg["nickname"] == "AppleKing"
+            assert guest_msg["type"] == "renamed"
+            assert guest_msg["nickname"] == "AppleKing"
+
+
 def test_join_unknown_room():
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:

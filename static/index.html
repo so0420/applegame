@@ -14,13 +14,6 @@
       <h1>🍎 사과 게임</h1>
 
       <div class="section">
-        <h3>닉네임</h3>
-        <div class="field">
-          <input id="nickname" maxlength="20" placeholder="닉네임 (최대 20자)" autocomplete="off">
-        </div>
-      </div>
-
-      <div class="section">
         <h3>모드 선택</h3>
         <div class="modes">
           <button class="mode secondary" data-intent="solo">혼자 연습</button>
@@ -40,8 +33,25 @@
     <section class="screen" id="lobby" hidden>
       <h2 id="lobbyTitle">대기 중</h2>
 
+      <div class="section" id="roomCodeSection">
+        <h3>방 코드</h3>
+        <div class="code-row">
+          <code id="roomCode">------</code>
+          <button id="copyCodeBtn" class="chip-btn">코드 복사</button>
+          <button id="copyLinkBtn" class="chip-btn">초대 링크</button>
+        </div>
+        <p id="copyToast" class="copy-toast" hidden></p>
+      </div>
+
       <div class="section">
-        <p class="lobby-info">방 코드<code id="roomCode">------</code></p>
+        <h3>내 닉네임</h3>
+        <div class="field">
+          <input id="nickInput" maxlength="20" placeholder="닉네임 (최대 20자)" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>참가자</h3>
         <p id="lobbyMsg" class="muted" style="text-align:center;">상대를 기다리는 중입니다.</p>
         <ul id="playerList"></ul>
         <div class="lobby-actions">

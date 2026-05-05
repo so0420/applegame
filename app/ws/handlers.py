@@ -103,7 +103,17 @@ async def _message_loop(
         data = await ws.receive_json()
         mtype = data.get("type")
 
-        if mtype == S.START:
+        if mtype == S.RENAME:
+            new = (data.get("nickname") or "").strip()[:20]
+            if not new:
+                continue
+            player.nickname = new
+            await broadcast(
+                room,
+                S.msg(S.RENAMED, player_id=player.id, nickname=new),
+            )
+
+        elif mtype == S.START:
             if room.state != "waiting":
                 continue
             if room.mode == "friend" and player.id != room.host_id:

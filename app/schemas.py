@@ -4,7 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 # Client message types
-HELLO = "hello"          # {nickname, intent: solo|create|join|match, code?}
+HELLO = "hello"          # {nickname?, intent: solo|create|join|match, code?}
+RENAME = "rename"        # {nickname}
 START = "start"          # {} (host triggers in friend; auto in others)
 DRAG_UPDATE = "drag_update"  # {r1,c1,r2,c2}
 SUBMIT = "submit"        # {r1,c1,r2,c2}
@@ -15,6 +16,7 @@ LEAVE = "leave"          # {}
 JOINED = "joined"             # {player_id, room}
 PEER_JOINED = "peer_joined"   # {player}
 PEER_LEFT = "peer_left"       # {player_id}
+RENAMED = "renamed"           # {player_id, nickname}
 ROOM_FULL = "room_full"       # {}
 NOT_FOUND = "not_found"       # {}
 QUEUED = "queued"             # {position}

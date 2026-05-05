@@ -56,8 +56,11 @@ class RoomManager:
 
 
 def make_player(nickname: str, ws: WebSocket | None = None) -> Player:
-    nick = (nickname or "").strip()[:20] or "Anonymous"
-    return Player(id=_gen_player_id(), nickname=nick, ws=ws)
+    pid = _gen_player_id()
+    nick = (nickname or "").strip()[:20]
+    if not nick:
+        nick = f"Player-{pid[:4].upper()}"
+    return Player(id=pid, nickname=nick, ws=ws)
 
 
 async def broadcast(room: Room, message: dict[str, Any], exclude: str | None = None) -> None:

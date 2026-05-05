@@ -56,9 +56,18 @@ attachDragInput(canvas, state.renderer, {
   },
 });
 
-// ---- Home screen ----
-$("nickname").value = localStorage.getItem("nickname") || "";
+// ---- Auto-join via ?room=XXXXXX ----
+(function autoJoinFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const room = (params.get("room") || "").trim().toUpperCase();
+  if (room.length === 6) {
+    // Strip the param so refresh doesn't auto-rejoin a stale code
+    history.replaceState(null, "", location.pathname);
+    startSession("join", room);
+  }
+})();
 
+// ---- Home screen ----
 document.querySelectorAll(".mode").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const intent = btn.dataset.intent;
@@ -80,32 +89,91 @@ $("joinSubmit").addEventListener("click", async () => {
 });
 
 async function startSession(intent, code = null) {
-  const nickname = $("nickname").value.trim().slice(0, 20) || "Anonymous";
-  localStorage.setItem("nickname", nickname);
   state.intent = intent;
-  state.myName = nickname;
 
   state.ws = new GameSocket();
   bindSocket(state.ws);
   await state.ws.connect();
-  state.ws.send("hello", { nickname, intent, code });
+  // Server will auto-generate a default nickname (Player-XXXX)
+  state.ws.send("hello", { intent, code });
 
   // Show lobby until joined / game starts
   $("lobbyTitle").textContent =
-    intent === "match" ? "랜덤 매칭 중…" :
-    intent === "solo" ? "혼자 연습 시작…" :
-    intent === "create" ? "방 생성 중…" : "방 입장 중…";
+    intent === "match" ? "랜덤 매칭 중" :
+    intent === "solo" ? "혼자 연습 시작" :
+    intent === "create" ? "방 만들기" : "방 입장";
   $("lobbyMsg").textContent = intent === "match" ? "상대를 찾고 있습니다." : "잠시만 기다려 주세요.";
   $("startBtn").hidden = true;
   $("roomCode").textContent = "------";
   $("playerList").innerHTML = "";
+  $("copyToast").hidden = true;
+  // Hide room code section for solo/match (no shareable code)
+  $("roomCodeSection").hidden = (intent === "solo" || intent === "match");
   show("lobby");
 }
 
+// ---- Lobby actions ----
 $("cancelBtn").addEventListener("click", () => leaveAndGoHome());
 $("homeBtn").addEventListener("click", () => leaveAndGoHome());
 $("startBtn").addEventListener("click", () => state.ws?.send("start"));
 $("rematchBtn").addEventListener("click", () => state.ws?.send("rematch"));
+
+const nickInput = $("nickInput");
+nickInput.addEventListener("change", commitNickname);
+nickInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    nickInput.blur();
+  }
+});
+
+function commitNickname() {
+  const v = nickInput.value.trim().slice(0, 20);
+  if (!v || v === state.myName) {
+    nickInput.value = state.myName;
+    return;
+  }
+  state.ws?.send("rename", { nickname: v });
+  // Optimistic local update; server will confirm via 'renamed'
+  state.myName = v;
+}
+
+$("copyCodeBtn").addEventListener("click", () => {
+  const code = state.room?.id;
+  if (!code) return;
+  copyText(code, "코드를 복사했습니다.");
+});
+
+$("copyLinkBtn").addEventListener("click", () => {
+  const code = state.room?.id;
+  if (!code) return;
+  const link = `${location.origin}/?room=${code}`;
+  copyText(link, "초대 링크를 복사했습니다.");
+});
+
+async function copyText(text, successMsg) {
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch {
+    // Fallback for non-secure contexts
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand("copy"); } catch { ok = false; }
+    document.body.removeChild(ta);
+  }
+  const toast = $("copyToast");
+  toast.textContent = ok ? successMsg : "복사에 실패했습니다.";
+  toast.style.color = ok ? "" : "var(--danger)";
+  toast.hidden = false;
+  clearTimeout(state._toastTimer);
+  state._toastTimer = setTimeout(() => { toast.hidden = true; }, 2000);
+}
 
 function leaveAndGoHome() {
   state.ws?.send("leave");
@@ -124,8 +192,10 @@ function resetState() {
   state.myScore = 0;
   state.oppScore = 0;
   state.oppName = "상대";
+  state.myName = "나";
   $("hudMe").querySelector(".score").textContent = "0";
   $("hudOpp").querySelector(".score").textContent = "0";
+  $("nickInput").value = "";
 }
 
 // ---- Socket bindings ----
@@ -141,6 +211,12 @@ function bindSocket(ws) {
     const m = e.detail;
     state.playerId = m.player_id;
     onRoomUpdate(m.room);
+    // Set my nickname from server-assigned default
+    const me = m.room.players.find((p) => p.id === state.playerId);
+    if (me) {
+      state.myName = me.nickname;
+      nickInput.value = me.nickname;
+    }
   });
 
   ws.addEventListener("msg:peer_joined", (e) => {
@@ -156,6 +232,21 @@ function bindSocket(ws) {
     if (!state.room) return;
     state.room.players = state.room.players.filter((p) => p.id !== e.detail.player_id);
     renderLobby();
+  });
+
+  ws.addEventListener("msg:renamed", (e) => {
+    const { player_id, nickname } = e.detail;
+    if (!state.room) return;
+    const p = state.room.players.find((x) => x.id === player_id);
+    if (p) p.nickname = nickname;
+    if (player_id === state.playerId) {
+      state.myName = nickname;
+      if (document.activeElement !== nickInput) nickInput.value = nickname;
+    } else {
+      state.oppName = nickname;
+    }
+    renderLobby();
+    updateHud();
   });
 
   ws.addEventListener("msg:queued", (e) => {
@@ -179,10 +270,14 @@ function bindSocket(ws) {
     state.oppScore = 0;
     state.renderer.setBoard(m.board);
     state.renderer.setPeerDrag(null);
+    // Capture opponent name from current room
+    if (state.room) {
+      const opp = state.room.players.find((p) => p.id !== state.playerId);
+      if (opp) state.oppName = opp.nickname;
+    }
     updateHud();
     show("game");
     startTimer();
-    // resize after layout settles
     requestAnimationFrame(() => state.renderer.resize());
   });
 
@@ -200,7 +295,7 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:reject", () => {
-    // Optional: brief shake or sound; for now just clear sum badge
+    // No-op; could add visual feedback
   });
 
   ws.addEventListener("msg:game_end", (e) => {
@@ -217,6 +312,8 @@ function onRoomUpdate(room) {
   state.hostId = room.host_id;
   state.mode = room.mode;
   $("roomCode").textContent = room.id;
+  // Solo and random match: hide room code section
+  $("roomCodeSection").hidden = (room.mode === "solo" || room.mode === "random");
   renderLobby();
 }
 
@@ -231,7 +328,6 @@ function renderLobby() {
     li.innerHTML = `<span>${escapeHtml(p.nickname)}${me}</span><span></span>`;
     list.appendChild(li);
   }
-  // Show start button only for host in friend mode when both players present
   const isHost = state.playerId === state.hostId;
   const canStart = state.mode === "friend" && isHost && state.room.players.length === 2;
   $("startBtn").hidden = !canStart;
@@ -239,7 +335,7 @@ function renderLobby() {
     $("lobbyMsg").textContent =
       state.room.players.length === 2
         ? (isHost ? "준비되면 시작 버튼을 누르세요." : "방장이 시작하기를 기다리는 중…")
-        : "친구에게 코드를 공유하세요.";
+        : "친구에게 코드 또는 초대 링크를 공유하세요.";
   }
 }
 
@@ -248,7 +344,6 @@ function applyScores(scores) {
     if (pid === state.playerId) state.myScore = s;
     else {
       state.oppScore = s;
-      // capture opp name
       const opp = state.room?.players.find((p) => p.id === pid);
       if (opp) state.oppName = opp.nickname;
     }
@@ -291,7 +386,6 @@ function showResult(detail) {
   const list = $("finalScores");
   list.innerHTML = "";
   const players = state.room?.players ?? [];
-  // Order: me first
   const ordered = players.slice().sort((a, b) => (a.id === state.playerId ? -1 : b.id === state.playerId ? 1 : 0));
   for (const p of ordered) {
     const li = document.createElement("li");
@@ -305,13 +399,11 @@ function showResult(detail) {
   if (winner_id === null || winner_id === undefined) title = "무승부 🤝";
   else if (winner_id === state.playerId) title = "승리! 🎉";
   else title = "패배 😢";
-  // Solo: just show score
   if (state.mode === "solo") {
     title = `점수: ${state.myScore} / 170`;
   }
   $("resultTitle").textContent = title;
 
-  // Rematch only when room still exists with both players (friend / random)
   const both = players.length === 2;
   $("rematchBtn").hidden = !(both && (state.mode === "friend" ? state.playerId === state.hostId : true));
   show("result");

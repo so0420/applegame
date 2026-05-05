@@ -170,23 +170,43 @@ button.ghost:hover {
 }
 
 /* Lobby */
-.lobby-info {
-  text-align: center;
-  margin: 0 0 18px 0;
-  color: var(--muted);
-  font-size: 14px;
+.code-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.lobby-info code {
+.code-row code {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  padding: 6px 14px;
+  padding: 8px 16px;
   border-radius: 8px;
   font-size: 22px;
   letter-spacing: 6px;
   color: var(--text);
   font-weight: 700;
   font-family: "SF Mono", Consolas, monospace;
-  margin-left: 8px;
+}
+.chip-btn {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+.chip-btn:hover {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+.copy-toast {
+  text-align: center;
+  margin: 10px 0 0 0;
+  color: var(--good);
+  font-size: 13px;
+  font-weight: 500;
 }
 #playerList {
   list-style: none;
