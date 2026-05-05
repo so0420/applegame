@@ -74,9 +74,16 @@
           <span class="score">0</span>
         </div>
       </header>
-      <div class="board-wrap">
-        <canvas id="board" width="850" height="500"></canvas>
-        <div id="sumBadge" class="sum-badge" hidden>0</div>
+      <div class="boards">
+        <div class="board-wrap my">
+          <div class="board-label">내 보드</div>
+          <canvas id="board"></canvas>
+          <div id="sumBadge" class="sum-badge" hidden>0</div>
+        </div>
+        <div class="board-wrap opp" id="oppBoardWrap" hidden>
+          <div class="board-label" id="oppBoardLabel">상대</div>
+          <canvas id="oppBoard"></canvas>
+        </div>
       </div>
     </section>
 

@@ -154,9 +154,10 @@ async def _start_game(room: Room) -> None:
         if room.state == "playing":
             return
         room.start()
+        initial = room.initial_board()
     await broadcast(
         room,
-        S.msg(S.GAME_START, board=room.board, ends_at=room.ends_at),
+        S.msg(S.GAME_START, board=initial, ends_at=room.ends_at),
     )
 
     async def end_after_timeout() -> None:
@@ -176,23 +177,23 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
     async with room.lock:
         if room.state != "playing":
             return
-        cells = validate_and_clear(room.board, int(r1), int(c1), int(r2), int(c2))
+        my_board = room.boards.get(player.id)
+        if my_board is None:
+            return
+        cells = validate_and_clear(my_board, int(r1), int(c1), int(r2), int(c2))
         if cells is None:
             await send(player, S.msg(S.REJECT, reason="invalid_or_taken"))
             return
         gained = len(cells)
         player.score += gained
         player.last_score_ts = time.time()
-        room.apples_left -= gained
+        room.apples_left[player.id] -= gained
         scores = {p.id: p.score for p in room.players.values()}
-        all_cleared = room.apples_left <= 0
 
     await broadcast(
         room,
         S.msg(S.CLEAR, player_id=player.id, cells=cells, scores=scores),
     )
-    if all_cleared:
-        await _end_game(room)
 
 
 async def _end_game(room: Room) -> None:

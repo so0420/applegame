@@ -36,6 +36,8 @@ const state = {
 const sumBadge = $("sumBadge");
 const canvas = $("board");
 state.renderer = new BoardRenderer(canvas);
+const oppCanvas = $("oppBoard");
+state.oppRenderer = new BoardRenderer(oppCanvas);
 
 attachDragInput(canvas, state.renderer, {
   onUpdate: (rect) => {
@@ -244,6 +246,7 @@ function bindSocket(ws) {
       if (document.activeElement !== nickInput) nickInput.value = nickname;
     } else {
       state.oppName = nickname;
+      $("oppBoardLabel").textContent = nickname;
     }
     renderLobby();
     updateHud();
@@ -268,29 +271,45 @@ function bindSocket(ws) {
     state.endsAt = m.ends_at * 1000;
     state.myScore = 0;
     state.oppScore = 0;
+    // Both my board and opp board start from the same initial state
     state.renderer.setBoard(m.board);
-    state.renderer.setPeerDrag(null);
-    // Capture opponent name from current room
+    state.renderer.setMyDrag(null);
+    state.oppRenderer.setBoard(m.board);
+    state.oppRenderer.setMyDrag(null);
+    // Show opp board only when there is an opponent
+    const hasOpp = (state.room?.players?.length ?? 0) >= 2;
+    $("oppBoardWrap").hidden = !hasOpp;
     if (state.room) {
       const opp = state.room.players.find((p) => p.id !== state.playerId);
-      if (opp) state.oppName = opp.nickname;
+      if (opp) {
+        state.oppName = opp.nickname;
+        $("oppBoardLabel").textContent = opp.nickname;
+      }
     }
     updateHud();
     show("game");
     startTimer();
-    requestAnimationFrame(() => state.renderer.resize());
+    requestAnimationFrame(() => {
+      state.renderer.resize();
+      state.oppRenderer.resize();
+    });
   });
 
   ws.addEventListener("msg:peer_drag", (e) => {
     const { player_id, r1, c1, r2, c2 } = e.detail;
     if (player_id === state.playerId) return;
-    state.renderer.setPeerDrag({ r1, c1, r2, c2 });
+    // Show opponent's drag rect on their own (mini) board
+    state.oppRenderer.setMyDrag({ r1, c1, r2, c2 });
   });
 
   ws.addEventListener("msg:clear", (e) => {
     const { cells, scores, player_id } = e.detail;
-    state.renderer.clearCells(cells);
-    if (player_id !== state.playerId) state.renderer.setPeerDrag(null);
+    if (player_id === state.playerId) {
+      state.renderer.clearCells(cells);
+    } else {
+      state.oppRenderer.clearCells(cells);
+      state.oppRenderer.setMyDrag(null);
+    }
     applyScores(scores);
   });
 

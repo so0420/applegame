@@ -42,11 +42,11 @@ class Room:
     mode: RoomMode
     host_id: str | None = None
     players: dict[str, Player] = field(default_factory=dict)
-    board: list[list[int]] = field(default_factory=list)
+    boards: dict[str, list[list[int]]] = field(default_factory=dict)
     state: RoomState = "waiting"
     started_at: float | None = None
     ends_at: float | None = None
-    apples_left: int = TOTAL
+    apples_left: dict[str, int] = field(default_factory=dict)
     winner_id: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     timer_task: asyncio.Task | None = None
@@ -71,11 +71,10 @@ class Room:
         }
 
     def reset_for_rematch(self) -> None:
-        self.board = generate_board()
+        self._init_boards()
         self.state = "waiting"
         self.started_at = None
         self.ends_at = None
-        self.apples_left = TOTAL
         self.winner_id = None
         for p in self.players.values():
             p.score = 0
@@ -83,14 +82,25 @@ class Room:
             p.last_score_ts = 0.0
 
     def start(self) -> None:
-        self.board = generate_board()
+        self._init_boards()
         self.state = "playing"
         self.started_at = time.time()
         self.ends_at = self.started_at + GAME_DURATION
-        self.apples_left = TOTAL
         for p in self.players.values():
             p.score = 0
             p.last_score_ts = 0.0
+
+    def _init_boards(self) -> None:
+        """Generate one master board, deep-copy per player."""
+        master = generate_board()
+        self.boards = {pid: [row[:] for row in master] for pid in self.players}
+        self.apples_left = {pid: TOTAL for pid in self.players}
+
+    def initial_board(self) -> list[list[int]]:
+        """Master starting state, sent in game_start. All players begin here."""
+        if not self.boards:
+            return []
+        return next(iter(self.boards.values()))
 
     def determine_winner(self) -> str | None:
         if not self.players:
