@@ -200,10 +200,15 @@ async def _end_game(room: Room) -> None:
         if room.state == "finished":
             return
         room.state = "finished"
-        if room.timer_task and not room.timer_task.done():
-            room.timer_task.cancel()
+        timer = room.timer_task
+        room.timer_task = None
         room.winner_id = room.determine_winner()
         scores = {p.id: p.score for p in room.players.values()}
+    # Cancel the timeout task only if we're ending early (not from inside it).
+    # Cancelling the current task would interrupt the broadcast below.
+    current = asyncio.current_task()
+    if timer is not None and timer is not current and not timer.done():
+        timer.cancel()
     await broadcast(
         room,
         S.msg(S.GAME_END, scores=scores, winner_id=room.winner_id),

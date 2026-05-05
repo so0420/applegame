@@ -102,6 +102,29 @@ def test_random_match_first_client_queued():
         assert first["position"] >= 1
 
 
+def test_game_end_broadcast_on_timer_expiry(monkeypatch):
+    """Regression: cancelling the timer task from inside _end_game used to
+    interrupt the game_end broadcast. Verify a solo game emits game_end
+    when the timer naturally expires."""
+    import app.game.room as room_mod
+    import app.ws.handlers as handlers_mod
+    monkeypatch.setattr(room_mod, "GAME_DURATION", 0.3)
+    monkeypatch.setattr(handlers_mod, "GAME_DURATION", 0.3)
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello", "intent": "solo"})
+        # Drain joined + game_start
+        msgs = []
+        for _ in range(2):
+            msgs.append(ws.receive_json())
+        assert any(m["type"] == "game_start" for m in msgs)
+        # Now wait for timer to fire and broadcast game_end
+        end = ws.receive_json()
+        assert end["type"] == "game_end"
+        assert "scores" in end
+
+
 def test_solo_submit_and_clear():
     """Verify a valid sum-10 submit results in a clear broadcast."""
     client = TestClient(app)
