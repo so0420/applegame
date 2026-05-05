@@ -6,13 +6,17 @@
 export const ROWS = 10;
 export const COLS = 17;
 
-const APPLE_RED = "#ff5252";
-const APPLE_DARK = "#c62828";
+const APPLE_RED = "#e53935";
+const APPLE_DARK = "#b71c1c";
 const TEXT_COLOR = "#ffffff";
-const EMPTY_COLOR = "#2f3540";
-const ME_BOX = "rgba(79, 195, 247, 0.35)";
-const ME_BOX_OK = "rgba(105, 240, 174, 0.55)";
-const OPP_BOX = "rgba(255, 82, 82, 0.30)";
+const BOARD_BG = "#ffffff";
+const EMPTY_COLOR = "#f0f1f3";
+const ME_BOX = "rgba(25, 118, 210, 0.18)";
+const ME_BOX_OK = "rgba(46, 125, 50, 0.28)";
+const ME_STROKE = "#1976d2";
+const ME_STROKE_OK = "#2e7d32";
+const OPP_BOX = "rgba(198, 40, 40, 0.18)";
+const OPP_STROKE = "#c62828";
 
 export class BoardRenderer {
   constructor(canvas) {
@@ -98,7 +102,7 @@ export class BoardRenderer {
     const cs = this.cellSize;
     const pad = this.padding;
 
-    ctx.fillStyle = "#252a33";
+    ctx.fillStyle = BOARD_BG;
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     if (!this.board) return;
@@ -131,13 +135,13 @@ export class BoardRenderer {
     });
 
     // Peer drag
-    if (this.peerDrag) this._drawDragRect(this.peerDrag, OPP_BOX, "#ff5252");
+    if (this.peerDrag) this._drawDragRect(this.peerDrag, OPP_BOX, OPP_STROKE);
 
     // My drag
     if (this.myDrag) {
       const sum = this.sumIn(this.myDrag);
       const color = sum === 10 ? ME_BOX_OK : ME_BOX;
-      const stroke = sum === 10 ? "#69f0ae" : "#4fc3f7";
+      const stroke = sum === 10 ? ME_STROKE_OK : ME_STROKE;
       this._drawDragRect(this.myDrag, color, stroke);
     }
   }

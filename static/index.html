@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Multi Apple Game</title>
+  <title>사과 게임</title>
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
@@ -11,34 +11,44 @@
 
     <!-- Home / mode selection -->
     <section class="screen" id="home">
-      <h1>🍎 Multi Apple Game</h1>
-      <p class="subtitle">합이 10이 되도록 사과를 드래그하세요. 2분 안에 더 많이 지운 쪽 승!</p>
-      <label class="nick">
-        <span>닉네임</span>
-        <input id="nickname" maxlength="20" placeholder="익명" autocomplete="off">
-      </label>
-      <div class="modes">
-        <button class="mode" data-intent="solo">혼자 연습</button>
-        <button class="mode primary" data-intent="match">랜덤 매칭</button>
-        <button class="mode" data-intent="create">방 만들기</button>
-        <button class="mode" data-intent="join-open">코드로 입장</button>
+      <h1>🍎 사과 게임</h1>
+
+      <div class="section">
+        <h3>닉네임</h3>
+        <div class="field">
+          <input id="nickname" maxlength="20" placeholder="닉네임 (최대 20자)" autocomplete="off">
+        </div>
       </div>
-      <div class="join-code-row" id="joinRow" hidden>
-        <input id="joinCode" maxlength="6" placeholder="6자리 코드" autocomplete="off">
-        <button id="joinSubmit">입장</button>
+
+      <div class="section">
+        <h3>모드 선택</h3>
+        <div class="modes">
+          <button class="mode secondary" data-intent="solo">혼자 연습</button>
+          <button class="mode" data-intent="match">랜덤 매칭</button>
+          <button class="mode secondary" data-intent="create">방 만들기</button>
+          <button class="mode secondary" data-intent="join-open">코드로 입장</button>
+        </div>
+        <div class="join-code-row" id="joinRow" hidden>
+          <input id="joinCode" maxlength="6" placeholder="6자리 코드" autocomplete="off">
+          <button id="joinSubmit">입장</button>
+        </div>
+        <p class="helper">* 합이 10이 되도록 사과를 드래그하세요. 2분 안에 더 많이 지운 쪽 승!</p>
       </div>
     </section>
 
     <!-- Lobby -->
     <section class="screen" id="lobby" hidden>
-      <h2 id="lobbyTitle">대기 중…</h2>
-      <p class="lobby-info">
-        방 코드 <code id="roomCode">------</code>
-      </p>
-      <p id="lobbyMsg" class="muted">상대를 기다리는 중입니다.</p>
-      <ul id="playerList"></ul>
-      <button id="startBtn" hidden>시작</button>
-      <button id="cancelBtn" class="ghost">나가기</button>
+      <h2 id="lobbyTitle">대기 중</h2>
+
+      <div class="section">
+        <p class="lobby-info">방 코드<code id="roomCode">------</code></p>
+        <p id="lobbyMsg" class="muted" style="text-align:center;">상대를 기다리는 중입니다.</p>
+        <ul id="playerList"></ul>
+        <div class="lobby-actions">
+          <button id="startBtn" hidden>시작</button>
+          <button id="cancelBtn" class="ghost">나가기</button>
+        </div>
+      </div>
     </section>
 
     <!-- Game -->
@@ -63,10 +73,12 @@
     <!-- Result -->
     <section class="screen" id="result" hidden>
       <h2 id="resultTitle">결과</h2>
-      <ul id="finalScores"></ul>
-      <div class="result-actions">
-        <button id="rematchBtn" hidden>재대결</button>
-        <button id="homeBtn" class="ghost">홈으로</button>
+      <div class="section">
+        <ul id="finalScores"></ul>
+        <div class="result-actions">
+          <button id="rematchBtn" hidden>재대결</button>
+          <button id="homeBtn" class="ghost">홈으로</button>
+        </div>
       </div>
     </section>
 
