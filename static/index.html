@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Multi Apple Game</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <main id="app">
+
+    <!-- Home / mode selection -->
+    <section class="screen" id="home">
+      <h1>🍎 Multi Apple Game</h1>
+      <p class="subtitle">합이 10이 되도록 사과를 드래그하세요. 2분 안에 더 많이 지운 쪽 승!</p>
+      <label class="nick">
+        <span>닉네임</span>
+        <input id="nickname" maxlength="20" placeholder="익명" autocomplete="off">
+      </label>
+      <div class="modes">
+        <button class="mode" data-intent="solo">혼자 연습</button>
+        <button class="mode primary" data-intent="match">랜덤 매칭</button>
+        <button class="mode" data-intent="create">방 만들기</button>
+        <button class="mode" data-intent="join-open">코드로 입장</button>
+      </div>
+      <div class="join-code-row" id="joinRow" hidden>
+        <input id="joinCode" maxlength="6" placeholder="6자리 코드" autocomplete="off">
+        <button id="joinSubmit">입장</button>
+      </div>
+    </section>
+
+    <!-- Lobby -->
+    <section class="screen" id="lobby" hidden>
+      <h2 id="lobbyTitle">대기 중…</h2>
+      <p class="lobby-info">
+        방 코드 <code id="roomCode">------</code>
+      </p>
+      <p id="lobbyMsg" class="muted">상대를 기다리는 중입니다.</p>
+      <ul id="playerList"></ul>
+      <button id="startBtn" hidden>시작</button>
+      <button id="cancelBtn" class="ghost">나가기</button>
+    </section>
+
+    <!-- Game -->
+    <section class="screen" id="game" hidden>
+      <header class="hud">
+        <div class="player me" id="hudMe">
+          <span class="name">나</span>
+          <span class="score">0</span>
+        </div>
+        <div class="timer" id="timer">2:00</div>
+        <div class="player opp" id="hudOpp">
+          <span class="name">상대</span>
+          <span class="score">0</span>
+        </div>
+      </header>
+      <div class="board-wrap">
+        <canvas id="board" width="850" height="500"></canvas>
+        <div id="sumBadge" class="sum-badge" hidden>0</div>
+      </div>
+    </section>
+
+    <!-- Result -->
+    <section class="screen" id="result" hidden>
+      <h2 id="resultTitle">결과</h2>
+      <ul id="finalScores"></ul>
+      <div class="result-actions">
+        <button id="rematchBtn" hidden>재대결</button>
+        <button id="homeBtn" class="ghost">홈으로</button>
+      </div>
+    </section>
+
+  </main>
+
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

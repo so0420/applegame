@@ -1,0 +1,79 @@
+"""Room registry and connection manager."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import random
+import string
+import uuid
+from typing import Any
+
+from fastapi import WebSocket
+
+from ..game.room import Player, Room, RoomMode
+
+log = logging.getLogger(__name__)
+
+ROOM_CODE_LEN = 6
+ROOM_CODE_ALPHA = string.ascii_uppercase + string.digits
+
+
+def _gen_room_id() -> str:
+    return "".join(random.choices(ROOM_CODE_ALPHA, k=ROOM_CODE_LEN))
+
+
+def _gen_player_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+class RoomManager:
+    def __init__(self) -> None:
+        self.rooms: dict[str, Room] = {}
+        self._lock = asyncio.Lock()
+
+    async def create_room(self, mode: RoomMode, host: Player) -> Room:
+        async with self._lock:
+            for _ in range(10):
+                rid = _gen_room_id()
+                if rid not in self.rooms:
+                    break
+            else:
+                raise RuntimeError("could not allocate room id")
+            room = Room(id=rid, mode=mode, host_id=host.id, players={host.id: host})
+            self.rooms[rid] = room
+            log.info("room created id=%s mode=%s host=%s", rid, mode, host.nickname)
+            return room
+
+    def get(self, room_id: str) -> Room | None:
+        return self.rooms.get(room_id.upper())
+
+    async def remove(self, room_id: str) -> None:
+        async with self._lock:
+            room = self.rooms.pop(room_id, None)
+            if room and room.timer_task and not room.timer_task.done():
+                room.timer_task.cancel()
+                log.info("room removed id=%s", room_id)
+
+
+def make_player(nickname: str, ws: WebSocket | None = None) -> Player:
+    nick = (nickname or "").strip()[:20] or "Anonymous"
+    return Player(id=_gen_player_id(), nickname=nick, ws=ws)
+
+
+async def broadcast(room: Room, message: dict[str, Any], exclude: str | None = None) -> None:
+    targets = [p for p in room.players.values() if p.ws and p.id != exclude]
+    if not targets:
+        return
+    await asyncio.gather(
+        *(p.ws.send_json(message) for p in targets if p.ws),
+        return_exceptions=True,
+    )
+
+
+async def send(player: Player, message: dict[str, Any]) -> None:
+    if player.ws is None:
+        return
+    try:
+        await player.ws.send_json(message)
+    except Exception as e:  # noqa: BLE001
+        log.debug("send failed to %s: %s", player.id, e)
