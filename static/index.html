@@ -7,6 +7,19 @@
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
+  <!-- Viewport-fixed overlay UI shown only in mobile-rotated game view -->
+  <div id="mobileGameUi" class="mobile-game-ui">
+    <button class="corner-btn corner-tl" id="cornerDrawerBtn" aria-label="순위">☰</button>
+    <button class="corner-btn corner-tr" id="cornerHomeBtn" aria-label="홈">⌂</button>
+    <div class="bottom-strip">
+      <div class="big-score" id="bigScore">0</div>
+      <div class="big-progress">
+        <div class="big-progress-fill" id="bigProgressFill"></div>
+      </div>
+      <div class="bottom-timer" id="bigTimer">2:00</div>
+    </div>
+  </div>
+
   <main id="app">
 
     <!-- Home / mode selection -->

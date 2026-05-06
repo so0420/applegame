@@ -231,13 +231,17 @@ $("rematchBtn").addEventListener("click", () => {
   state.ws?.send("rematch");
 });
 
-// Drawer toggle (mobile)
+// Drawer toggle (mobile) — desktop drawer button + mobile-overlay corner button
 $("drawerToggle").addEventListener("click", () => {
   screens.game.classList.toggle("drawer-open");
 });
 $("drawerBackdrop").addEventListener("click", () => {
   screens.game.classList.remove("drawer-open");
 });
+$("cornerDrawerBtn").addEventListener("click", () => {
+  screens.game.classList.toggle("drawer-open");
+});
+$("cornerHomeBtn").addEventListener("click", () => leaveAndGoHome());
 
 const nickInput = $("nickInput");
 nickInput.addEventListener("change", commitNickname);
@@ -326,6 +330,9 @@ function resetState() {
   $("lbList").innerHTML = "";
   $("nickInput").value = "";
   $("progressFill").style.width = "0%";
+  $("bigProgressFill").style.width = "0%";
+  $("bigScore").textContent = "0";
+  $("bigTimer").textContent = "2:00";
   $("resultBanner").hidden = true;
   $("topProgress").hidden = false;
   $("focusLabel").hidden = true;
@@ -737,6 +744,7 @@ function reorderAndRankLeaderboard(scoresOverride = null) {
     if (p.id === state.playerId) {
       $("myRank").textContent = `#${idx + 1}`;
       $("myScoreNum").textContent = String(scores[p.id] || 0);
+      $("bigScore").textContent = String(scores[p.id] || 0);
       state.myScore = scores[p.id] || 0;
     }
   });
@@ -750,10 +758,12 @@ function startTimer() {
     const sec = Math.ceil(remaining / 1000);
     const m = Math.floor(sec / 60);
     const s = sec % 60;
+    const text = `${m}:${String(s).padStart(2, "0")}`;
     const el = $("timer");
-    el.textContent = `${m}:${String(s).padStart(2, "0")}`;
+    el.textContent = text;
     el.classList.toggle("warn", sec <= 30 && sec > 10);
     el.classList.toggle("danger", sec <= 10);
+    $("bigTimer").textContent = text;
     if (remaining <= 0 && state.timerInterval) {
       clearInterval(state.timerInterval);
       state.timerInterval = null;
@@ -767,14 +777,21 @@ function startProgress() {
   if (state.progressInterval) clearInterval(state.progressInterval);
   const startTs = state.startedAt;
   const fill = $("progressFill");
+  const bigFill = $("bigProgressFill");
   fill.classList.remove("warn", "danger");
+  bigFill.classList.remove("warn", "danger");
   const tick = () => {
     const elapsed = Date.now() - startTs;
     const pct = Math.min(100, (elapsed / GAME_DURATION_MS) * 100);
     fill.style.width = pct + "%";
+    bigFill.style.width = pct + "%";
     const remaining = GAME_DURATION_MS - elapsed;
-    fill.classList.toggle("warn", remaining <= 30000 && remaining > 10000);
-    fill.classList.toggle("danger", remaining <= 10000);
+    const warn = remaining <= 30000 && remaining > 10000;
+    const danger = remaining <= 10000;
+    fill.classList.toggle("warn", warn);
+    fill.classList.toggle("danger", danger);
+    bigFill.classList.toggle("warn", warn);
+    bigFill.classList.toggle("danger", danger);
     if (elapsed >= GAME_DURATION_MS) {
       clearInterval(state.progressInterval);
       state.progressInterval = null;
@@ -957,17 +974,24 @@ function updateReplayProgress() {
   $("replayScrubFill").style.width = pct + "%";
   $("replayScrubThumb").style.left = pct + "%";
   $("progressFill").style.width = pct + "%";
+  $("bigProgressFill").style.width = pct + "%";
   $("replayCurrent").textContent = formatMmSs(state.replayTime);
   // Top-bar timer counts down so it matches the live game look
   const remaining = Math.max(0, GAME_DURATION_MS - state.replayTime);
+  const text = formatMmSs(remaining);
   const timerEl = $("timer");
-  timerEl.textContent = formatMmSs(remaining);
+  timerEl.textContent = text;
+  $("bigTimer").textContent = text;
   const remSec = Math.ceil(remaining / 1000);
-  timerEl.classList.toggle("warn", remSec <= 30 && remSec > 10);
-  timerEl.classList.toggle("danger", remSec <= 10);
+  const warn = remSec <= 30 && remSec > 10;
+  const danger = remSec <= 10;
+  timerEl.classList.toggle("warn", warn);
+  timerEl.classList.toggle("danger", danger);
   const fill = $("progressFill");
-  fill.classList.toggle("warn", remaining <= 30000 && remaining > 10000);
-  fill.classList.toggle("danger", remaining <= 10000);
+  fill.classList.toggle("warn", warn);
+  fill.classList.toggle("danger", danger);
+  $("bigProgressFill").classList.toggle("warn", warn);
+  $("bigProgressFill").classList.toggle("danger", danger);
 }
 
 function updateReplaySpeedButtons() {

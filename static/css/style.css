@@ -25,6 +25,78 @@ html, body {
   user-select: none;
 }
 
+/* Mobile-rotated overlay UI (corner buttons + bottom score/timer strip).
+   Lives outside #app so the rotation transform doesn't apply — these
+   stay in viewport coords. Hidden by default; enabled via media query. */
+.mobile-game-ui {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+.mobile-game-ui > * { pointer-events: auto; }
+.corner-btn {
+  position: absolute;
+  top: 10px;
+  width: 38px;
+  height: 38px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 50%;
+  color: #2e6e3a;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.corner-btn:hover { background: rgba(255, 255, 255, 0.9); }
+.corner-tl { left: 10px; }
+.corner-tr { right: 10px; }
+.bottom-strip {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.big-score {
+  font-size: 32px;
+  font-weight: 800;
+  color: #2e6e3a;
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  letter-spacing: -1px;
+}
+.big-progress {
+  flex: 1;
+  height: 9px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.big-progress-fill {
+  height: 100%;
+  background: linear-gradient(to right, #66bb6a, #388e3c);
+  border-radius: 999px;
+  transition: width 0.2s linear;
+}
+.big-progress-fill.warn  { background: linear-gradient(to right, #ffb74d, #ef6c00); }
+.big-progress-fill.danger { background: linear-gradient(to right, #e57373, #c62828); }
+.bottom-timer {
+  font-size: 14px;
+  color: #2e6e3a;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: right;
+}
+
 /* Portrait-mobile: rotate the entire game screen 90° so header and
    board are both in landscape. The header is minimised to score +
    timer to leave the most room for the board. */
@@ -37,6 +109,9 @@ html, body {
     width: 100%;
     height: 100%;
   }
+  body.on-game {
+    background: #d8edcd;
+  }
   body.on-game .game-screen {
     width: 100vh;
     height: 100vw;
@@ -48,27 +123,27 @@ html, body {
     margin: 0;
     border: none;
     border-radius: 0;
-    padding: 4px;
+    padding: 0;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
+    /* Mint-paper background with subtle grid */
+    background: #d8edcd;
+    background-image:
+      linear-gradient(to right, rgba(0, 60, 0, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(0, 60, 0, 0.05) 1px, transparent 1px);
+    background-size: 22px 22px;
   }
-
-  /* Compact header — score + timer only */
-  body.on-game .game-bar {
-    padding: 2px 8px;
-    gap: 6px;
-    border-bottom: none;
-  }
-  body.on-game .game-stat { font-size: 12px; gap: 3px; }
-  body.on-game .game-stat strong { font-size: 14px; }
-  body.on-game .game-stat .muted { display: none; }
-  body.on-game .game-stat.center { display: none; } /* hide rank */
-  body.on-game .drawer-toggle {
-    padding: 2px 8px;
-    font-size: 14px;
-  }
+  /* The default game-bar / progress are replaced by the overlay UI */
+  body.on-game .game-bar { display: none; }
   body.on-game .progress { display: none; }
+  body.on-game #board {
+    background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 0;
+  }
+  body.on-game .board-area { background: transparent; padding: 44px 14px 56px 14px; }
+  body.on-game .mobile-game-ui { display: block; }
 
   /* Compact result banner */
   body.on-game .result-banner {
