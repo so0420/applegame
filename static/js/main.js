@@ -397,6 +397,23 @@ function bindSocket(ws) {
     onReconnected(e.detail);
   });
 
+  ws.addEventListener("msg:room_reset", (e) => {
+    // Friend room came back to the lobby for the next round
+    exitReplay();
+    $("resultBanner").hidden = true;
+    $("topProgress").hidden = false;
+    state.events = [];
+    state.scores = {};
+    state.gameWinnerId = null;
+    state.miniRenderers.clear();
+    state.lbItems.clear();
+    $("lbList").innerHTML = "";
+    $("focusLabel").hidden = true;
+    clearSession();
+    onRoomUpdate(e.detail.room);
+    show("lobby");
+  });
+
   ws.addEventListener("msg:peer_disconnected", (e) => {
     const pid = e.detail.player_id;
     const item = state.lbItems.get(pid);

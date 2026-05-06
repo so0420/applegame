@@ -22,6 +22,7 @@ PEER_RECONNECTED = "peer_reconnected"    # {player_id}
 RECONNECTED = "reconnected"   # full state on successful reconnect
 RENAMED = "renamed"           # {player_id, nickname}
 CAPACITY_CHANGED = "capacity_changed"  # {capacity}
+ROOM_RESET = "room_reset"     # {room} — friend room returned to lobby for next round
 ROOM_FULL = "room_full"       # {}
 NOT_FOUND = "not_found"       # {}
 QUEUED = "queued"             # {position}

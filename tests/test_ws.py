@@ -154,6 +154,41 @@ def test_rename_broadcasts_to_room():
             assert guest_msg["nickname"] == "AppleKing"
 
 
+def test_friend_rematch_returns_to_lobby_not_auto_start(monkeypatch):
+    """In friend mode, '새 게임' should send everyone back to the lobby,
+    not immediately restart, so new players can join before round 2."""
+    import app.game.room as room_mod
+    import app.ws.handlers as handlers_mod
+    monkeypatch.setattr(room_mod, "GAME_DURATION", 0.3)
+    monkeypatch.setattr(handlers_mod, "GAME_DURATION", 0.3)
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host_ws:
+        host_ws.send_json({"type": "hello", "intent": "create"})
+        host_joined = host_ws.receive_json()
+        room_id = host_joined["room"]["id"]
+        with client.websocket_connect("/ws") as guest_ws:
+            guest_ws.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest_ws.receive_json()       # joined
+            host_ws.receive_json()        # peer_joined
+            host_ws.send_json({"type": "start"})
+            host_ws.receive_json()        # game_start
+            guest_ws.receive_json()       # game_start
+            # Wait for game_end (tick patched to 0.3s)
+            host_end = host_ws.receive_json()
+            guest_end = guest_ws.receive_json()
+            assert host_end["type"] == "game_end"
+            assert guest_end["type"] == "game_end"
+            # Host triggers rematch
+            host_ws.send_json({"type": "rematch"})
+            host_msg = host_ws.receive_json()
+            guest_msg = guest_ws.receive_json()
+            # Should be room_reset, NOT game_start
+            assert host_msg["type"] == "room_reset"
+            assert guest_msg["type"] == "room_reset"
+            assert host_msg["room"]["state"] == "waiting"
+
+
 def test_disconnect_during_play_does_not_end_game():
     """When one player drops, the room stays alive and the game keeps
     running for everyone else."""

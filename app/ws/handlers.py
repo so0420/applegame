@@ -306,7 +306,14 @@ async def _handle_rematch(room: Room, player: Player) -> None:
         if room.mode == "friend" and player.id != room.host_id:
             return
         room.reset_for_rematch()
-    await _start_game(room)
+        room_snapshot = room.public()
+    if room.mode == "friend":
+        # Friend rooms go back to the lobby so new players can join via code
+        # before the host starts the next round.
+        await broadcast(room, S.msg(S.ROOM_RESET, room=room_snapshot))
+    else:
+        # Solo / random — just kick off another round immediately.
+        await _start_game(room)
 
 
 async def _cleanup(
