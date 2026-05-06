@@ -25,36 +25,18 @@ html, body {
   user-select: none;
 }
 
-/* Portrait-mobile rotate prompt: shown only while the user is on the
-   game screen and the device is in portrait orientation. */
-.rotate-hint {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: var(--bg);
-  z-index: 500;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 24px;
-}
-.rotate-hint .rotate-icon {
-  font-size: 64px;
-  display: inline-block;
-  animation: rotate-bounce 2.4s ease-in-out infinite;
-}
-.rotate-hint .rotate-title {
-  font-size: 18px;
-  font-weight: 700;
-  margin: 12px 0 6px 0;
-}
-@keyframes rotate-bounce {
-  0%, 60%, 100% { transform: rotate(0); }
-  30% { transform: rotate(-90deg); }
-}
+/* In portrait-mobile, the canvas itself rotates 90° via JS-applied
+   transform. The board-area's explicit width/height are set in JS to
+   match the rotated visual so layout doesn't collapse. */
 @media (orientation: portrait) and (max-width: 700px) {
-  body.on-game .rotate-hint { display: flex; }
-  body.on-game #app { display: none; }
+  body.on-game .board-area {
+    padding: 8px;
+  }
+  body.on-game #board {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
 }
 
 body {
