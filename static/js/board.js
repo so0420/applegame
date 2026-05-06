@@ -58,6 +58,14 @@ export class BoardRenderer {
     this._scheduleAnim();
   }
 
+  // Instant clear (no fade) — used by replay seek so we can rebuild
+  // arbitrary points in the timeline without queuing animations.
+  applyClear(cells) {
+    if (!this.board) return;
+    for (const [r, c] of cells) this.board[r][c] = 0;
+    this.render();
+  }
+
   setMyDrag(rect) { this.myDrag = rect; this.render(); }
   setPeerDrag(rect) { this.peerDrag = rect; this.render(); }
 

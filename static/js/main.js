@@ -39,7 +39,12 @@ const state = {
   events: [],
   scores: {},
   replayActive: false,
-  replayTimers: [],
+  replayTime: 0,
+  replaySpeed: 4,
+  replayPaused: false,
+  replayRafId: null,
+  replayLastTick: 0,
+  replayCumScores: {},
 };
 
 const sumBadge = $("sumBadge");
@@ -589,67 +594,219 @@ function showResult(detail) {
   show("result");
 }
 
-// ---- Replay ----
+// ---- Replay (video-player style with seekable scrubber and speed control) ----
+const REPLAY_SPEEDS = [1, 2, 4, 16];
+const REPLAY_DEFAULT_SPEED = 4;
+
 function startReplay() {
   if (state.replayActive || !state.initialBoard) return;
+  // Stop any live game timers/progress
+  if (state.timerInterval) clearInterval(state.timerInterval);
+  if (state.progressInterval) clearInterval(state.progressInterval);
+  state.timerInterval = null;
+  state.progressInterval = null;
+
   state.replayActive = true;
-  // Reset all boards to initial state
+  state.replaySpeed = REPLAY_DEFAULT_SPEED;
+  state.replayPaused = false;
+  state.replayTime = 0;
+  state.replayCumScores = {};
+  for (const p of state.room?.players ?? []) state.replayCumScores[p.id] = 0;
+
+  // Reset boards to initial state
   state.bigRenderer.setBoard(state.initialBoard);
   state.bigRenderer.setMyDrag(null);
   for (const r of state.miniRenderers.values()) {
     r.setBoard(state.initialBoard);
     r.setMyDrag(null);
   }
-  // Reset score display
-  const zeroScores = {};
-  for (const p of state.room?.players ?? []) zeroScores[p.id] = 0;
-  state.scores = { ...zeroScores };
+  state.scores = { ...state.replayCumScores };
   reorderAndRankLeaderboard();
 
+  // Show controls and switch to game screen
+  $("replayControls").hidden = false;
   show("game");
   requestAnimationFrame(() => {
     state.bigRenderer.resize();
     for (const r of state.miniRenderers.values()) r.resize();
   });
 
-  // Schedule events
-  state.replayTimers = [];
-  const cumScores = { ...zeroScores };
-  for (const ev of state.events) {
-    const tid = setTimeout(() => {
-      const mini = state.miniRenderers.get(ev.player_id);
-      mini?.clearCells(ev.cells);
-      if (ev.player_id === state.playerId) state.bigRenderer.clearCells(ev.cells);
-      cumScores[ev.player_id] = (cumScores[ev.player_id] || 0) + ev.cells.length;
-      state.scores = { ...cumScores };
-      reorderAndRankLeaderboard();
-    }, ev.t_ms);
-    state.replayTimers.push(tid);
-  }
+  updateReplaySpeedButtons();
+  updateReplayPlayPause();
+  updateReplayProgress();
 
-  // Animate progress + timer over GAME_DURATION
-  const replayStart = Date.now();
-  state.startedAt = replayStart;
-  state.endsAt = replayStart + GAME_DURATION_MS;
-  startTimer();
-  startProgress();
-
-  // After duration, return to result
-  const endTid = setTimeout(() => exitReplay(true), GAME_DURATION_MS + 800);
-  state.replayTimers.push(endTid);
+  // Start RAF loop
+  state.replayLastTick = performance.now();
+  state.replayRafId = requestAnimationFrame(replayTick);
 }
 
 function exitReplay(returnToResult) {
   if (!state.replayActive) return;
   state.replayActive = false;
-  for (const tid of state.replayTimers) clearTimeout(tid);
-  state.replayTimers = [];
-  if (state.timerInterval) clearInterval(state.timerInterval);
-  if (state.progressInterval) clearInterval(state.progressInterval);
-  state.timerInterval = null;
-  state.progressInterval = null;
+  if (state.replayRafId) cancelAnimationFrame(state.replayRafId);
+  state.replayRafId = null;
+  $("replayControls").hidden = true;
   if (returnToResult) show("result");
 }
+
+function replayTick(now) {
+  if (!state.replayActive) {
+    state.replayRafId = null;
+    return;
+  }
+  const dt = now - state.replayLastTick;
+  state.replayLastTick = now;
+  if (!state.replayPaused) {
+    const newTime = Math.min(GAME_DURATION_MS, state.replayTime + dt * state.replaySpeed);
+    if (newTime > state.replayTime) {
+      applyReplayEventsBetween(state.replayTime, newTime, /*animate*/ true);
+      state.replayTime = newTime;
+      reorderAndRankLeaderboard();
+      updateReplayProgress();
+    }
+    if (newTime >= GAME_DURATION_MS) {
+      state.replayPaused = true;
+      updateReplayPlayPause();
+    }
+  }
+  state.replayRafId = requestAnimationFrame(replayTick);
+}
+
+function applyReplayEventsBetween(fromMs, toMs, animate) {
+  // Events are appended in chronological order during the live game, so we
+  // just iterate; if perf becomes a concern we can switch to a binary search.
+  for (const ev of state.events) {
+    if (ev.t_ms > fromMs && ev.t_ms <= toMs) {
+      const mini = state.miniRenderers.get(ev.player_id);
+      const isMe = ev.player_id === state.playerId;
+      if (animate) {
+        mini?.clearCells(ev.cells);
+        if (isMe) state.bigRenderer.clearCells(ev.cells);
+      } else {
+        mini?.applyClear(ev.cells);
+        if (isMe) state.bigRenderer.applyClear(ev.cells);
+      }
+      state.replayCumScores[ev.player_id] =
+        (state.replayCumScores[ev.player_id] || 0) + ev.cells.length;
+    }
+  }
+  state.scores = { ...state.replayCumScores };
+}
+
+function replaySeekTo(targetMs) {
+  targetMs = Math.max(0, Math.min(GAME_DURATION_MS, targetMs));
+  if (targetMs >= state.replayTime) {
+    applyReplayEventsBetween(state.replayTime, targetMs, /*animate*/ false);
+  } else {
+    // Backward: rebuild from initial
+    state.bigRenderer.setBoard(state.initialBoard);
+    for (const r of state.miniRenderers.values()) r.setBoard(state.initialBoard);
+    state.replayCumScores = {};
+    for (const p of state.room?.players ?? []) state.replayCumScores[p.id] = 0;
+    state.scores = { ...state.replayCumScores };
+    applyReplayEventsBetween(0, targetMs, /*animate*/ false);
+  }
+  state.replayTime = targetMs;
+  reorderAndRankLeaderboard();
+  updateReplayProgress();
+}
+
+function updateReplayProgress() {
+  const pct = (state.replayTime / GAME_DURATION_MS) * 100;
+  $("replayScrubFill").style.width = pct + "%";
+  $("replayScrubThumb").style.left = pct + "%";
+  $("progressFill").style.width = pct + "%";
+  $("replayCurrent").textContent = formatMmSs(state.replayTime);
+  // Top-bar timer counts down so it matches the live game look
+  const remaining = Math.max(0, GAME_DURATION_MS - state.replayTime);
+  const timerEl = $("timer");
+  timerEl.textContent = formatMmSs(remaining);
+  const remSec = Math.ceil(remaining / 1000);
+  timerEl.classList.toggle("warn", remSec <= 30 && remSec > 10);
+  timerEl.classList.toggle("danger", remSec <= 10);
+  const fill = $("progressFill");
+  fill.classList.toggle("warn", remaining <= 30000 && remaining > 10000);
+  fill.classList.toggle("danger", remaining <= 10000);
+}
+
+function updateReplaySpeedButtons() {
+  document.querySelectorAll(".speed-btn").forEach((btn) => {
+    const sp = parseInt(btn.dataset.speed, 10);
+    btn.classList.toggle("active", sp === state.replaySpeed);
+  });
+}
+
+function updateReplayPlayPause() {
+  $("replayPlayPause").textContent = state.replayPaused ? "▶" : "❚❚";
+}
+
+function formatMmSs(ms) {
+  const sec = Math.floor(ms / 1000);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Speed buttons
+document.querySelectorAll(".speed-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.replaySpeed = parseInt(btn.dataset.speed, 10) || REPLAY_DEFAULT_SPEED;
+    updateReplaySpeedButtons();
+  });
+});
+
+// Play / pause
+$("replayPlayPause").addEventListener("click", () => {
+  if (state.replayTime >= GAME_DURATION_MS) {
+    replaySeekTo(0);
+    state.replayPaused = false;
+  } else {
+    state.replayPaused = !state.replayPaused;
+  }
+  updateReplayPlayPause();
+});
+
+// Close
+$("replayClose").addEventListener("click", () => exitReplay(true));
+
+// Scrubber drag/click
+(function bindScrubber() {
+  const el = $("replayScrub");
+  let scrubbing = false;
+  let resumeAfter = false;
+
+  function timeAt(clientX) {
+    const r = el.getBoundingClientRect();
+    const x = Math.max(0, Math.min(r.width, clientX - r.left));
+    return (x / Math.max(1, r.width)) * GAME_DURATION_MS;
+  }
+
+  el.addEventListener("pointerdown", (e) => {
+    if (!state.replayActive) return;
+    scrubbing = true;
+    resumeAfter = !state.replayPaused;
+    state.replayPaused = true;
+    updateReplayPlayPause();
+    try { el.setPointerCapture(e.pointerId); } catch {}
+    replaySeekTo(timeAt(e.clientX));
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!scrubbing) return;
+    replaySeekTo(timeAt(e.clientX));
+  });
+  function endScrub(e) {
+    if (!scrubbing) return;
+    scrubbing = false;
+    try { if (e) el.releasePointerCapture(e.pointerId); } catch {}
+    if (resumeAfter && state.replayTime < GAME_DURATION_MS) {
+      state.replayPaused = false;
+      state.replayLastTick = performance.now();
+    }
+    updateReplayPlayPause();
+  }
+  el.addEventListener("pointerup", endScrub);
+  el.addEventListener("pointercancel", endScrub);
+})();
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (m) => ({

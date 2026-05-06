@@ -102,6 +102,26 @@
       <div class="progress">
         <div class="progress-fill" id="progressFill"></div>
       </div>
+      <div id="replayControls" class="replay-controls" hidden>
+        <div class="replay-scrub" id="replayScrub">
+          <div class="replay-scrub-fill" id="replayScrubFill"></div>
+          <div class="replay-scrub-thumb" id="replayScrubThumb"></div>
+        </div>
+        <div class="replay-bar">
+          <button id="replayPlayPause" class="chip-btn replay-icon-btn" aria-label="재생/정지">❚❚</button>
+          <div class="replay-time">
+            <span id="replayCurrent">0:00</span>
+            <span class="muted"> / 2:00</span>
+          </div>
+          <div class="replay-speeds">
+            <button class="speed-btn" data-speed="1">1×</button>
+            <button class="speed-btn" data-speed="2">2×</button>
+            <button class="speed-btn active" data-speed="4">4×</button>
+            <button class="speed-btn" data-speed="16">16×</button>
+          </div>
+          <button id="replayClose" class="chip-btn">닫기</button>
+        </div>
+      </div>
       <div class="game-layout">
         <aside class="leaderboard">
           <h3>LEADERBOARD <span class="muted">(<span id="lbCount">0</span>)</span></h3>
