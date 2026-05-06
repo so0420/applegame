@@ -384,6 +384,10 @@ button.ghost:hover {
   border-right: 1px solid var(--border);
   padding: 16px 14px;
   overflow-y: auto;
+  /* Reserve scrollbar gutter so the column width does not jitter when
+     the scrollbar appears/disappears (which used to retrigger the mini
+     boards' ResizeObserver in a feedback loop). */
+  scrollbar-gutter: stable;
   max-height: calc(100vh - 200px);
 }
 .leaderboard h3 {
