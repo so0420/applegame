@@ -80,28 +80,22 @@ export class BoardRenderer {
     const cs = window.getComputedStyle(wrap);
     const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
     const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-    const wasRotated = this.rotated;
     this.rotated = this.shouldRotate();
 
-    let cell;
-    if (this.rotated) {
-      // After 90° CSS rotation the visual is COLS cells tall × ROWS cells wide.
-      // Available area is the viewport minus header/chrome and parent padding.
-      const availW = Math.max(120, window.innerWidth - padX);
-      const availH = Math.max(120, window.innerHeight - 80);
-      const cellByW = Math.floor((availW - this.padding * 2) / ROWS);   // limits canvas natural HEIGHT
-      const cellByH = Math.floor((availH - this.padding * 2) / COLS);   // limits canvas natural WIDTH
-      cell = Math.min(cellByW, cellByH);
-    } else {
-      const availW = Math.max(120, wrap.clientWidth - padX);
-      const cellByW = Math.floor((availW - this.padding * 2) / COLS);
-      let cellByH = Infinity;
-      if (!this.mini) {
-        const maxH = Math.max(150, window.innerHeight * 0.72);
-        cellByH = Math.floor((maxH - this.padding * 2) / ROWS);
-      }
-      cell = Math.min(cellByW, cellByH);
+    // The whole game-screen rotates via CSS, so the canvas itself stays
+    // unrotated. We just need to pick cellSize that fits the parent's
+    // (already-rotated) layout box.
+    const availW = Math.max(120, wrap.clientWidth - padX);
+    const cellByW = Math.floor((availW - this.padding * 2) / COLS);
+    let cellByH = Infinity;
+    if (!this.mini) {
+      const ph = wrap.clientHeight - padY;
+      const usable = ph > 50
+        ? Math.max(120, ph)
+        : Math.max(150, window.innerHeight * 0.72);
+      cellByH = Math.floor((usable - this.padding * 2) / ROWS);
     }
+    let cell = Math.min(cellByW, cellByH);
     cell = Math.max(8, cell);
     this.cellSize = cell;
     const cssW = cell * COLS + this.padding * 2;
@@ -111,25 +105,6 @@ export class BoardRenderer {
     this.canvas.width = Math.floor(cssW * this.dpr);
     this.canvas.height = Math.floor(cssH * this.dpr);
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-
-    // Apply / clear CSS rotation. Parent (board-area) gets explicit
-    // dimensions sized for the rotated visual so layout doesn't collapse.
-    if (this.rotated) {
-      this.canvas.style.transformOrigin = "0 0";
-      this.canvas.style.transform = `translate(${cssH}px, 0) rotate(90deg)`;
-      if (wrap.classList.contains("board-area")) {
-        wrap.style.width = cssH + "px";
-        wrap.style.height = cssW + "px";
-      }
-    } else if (wasRotated) {
-      // Restore on rotation flip
-      this.canvas.style.transform = "";
-      this.canvas.style.transformOrigin = "";
-      if (wrap.classList.contains("board-area")) {
-        wrap.style.width = "";
-        wrap.style.height = "";
-      }
-    }
     this.render();
   }
 
