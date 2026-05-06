@@ -184,15 +184,17 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         if cells is None:
             await send(player, S.msg(S.REJECT, reason="invalid_or_taken"))
             return
+        now = time.time()
         gained = len(cells)
         player.score += gained
-        player.last_score_ts = time.time()
+        player.last_score_ts = now
         room.apples_left[player.id] -= gained
         scores = {p.id: p.score for p in room.players.values()}
+        t_ms = int((now - room.started_at) * 1000) if room.started_at else 0
 
     await broadcast(
         room,
-        S.msg(S.CLEAR, player_id=player.id, cells=cells, scores=scores),
+        S.msg(S.CLEAR, player_id=player.id, cells=cells, scores=scores, t_ms=t_ms),
     )
 
 

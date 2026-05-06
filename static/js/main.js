@@ -3,6 +3,7 @@ import { BoardRenderer } from "./board.js";
 import { attachDragInput } from "./input.js";
 
 const $ = (id) => document.getElementById(id);
+const GAME_DURATION_MS = 120 * 1000;
 
 const screens = {
   home: $("home"),
@@ -22,31 +23,37 @@ const state = {
   playerId: null,
   room: null,
   endsAt: null,
+  startedAt: null,
   timerInterval: null,
+  progressInterval: null,
   myScore: 0,
-  oppScore: 0,
-  oppName: "상대",
   myName: "나",
-  renderer: null,
   hostId: null,
   mode: null,
   intent: null,
+  bigRenderer: null,
+  miniRenderers: new Map(),
+  lbItems: new Map(),
+  initialBoard: null,
+  events: [],
+  scores: {},
+  replayActive: false,
+  replayTimers: [],
 };
 
 const sumBadge = $("sumBadge");
 const canvas = $("board");
-state.renderer = new BoardRenderer(canvas);
-const oppCanvas = $("oppBoard");
-state.oppRenderer = new BoardRenderer(oppCanvas);
+state.bigRenderer = new BoardRenderer(canvas);
 
-attachDragInput(canvas, state.renderer, {
+attachDragInput(canvas, state.bigRenderer, {
   onUpdate: (rect) => {
+    if (state.replayActive) return;
     state.ws?.send("drag_update", rect);
-    const sum = state.renderer.sumIn(rect);
+    const sum = state.bigRenderer.sumIn(rect);
     sumBadge.hidden = false;
     sumBadge.textContent = String(sum);
     sumBadge.classList.toggle("ten", sum === 10);
-    const center = state.renderer.rectCenter(rect);
+    const center = state.bigRenderer.rectCenter(rect);
     if (center) {
       sumBadge.style.left = center.x + "px";
       sumBadge.style.top = center.y + "px";
@@ -54,6 +61,7 @@ attachDragInput(canvas, state.renderer, {
   },
   onSubmit: (rect) => {
     sumBadge.hidden = true;
+    if (state.replayActive) return;
     state.ws?.send("submit", rect);
   },
 });
@@ -63,7 +71,6 @@ attachDragInput(canvas, state.renderer, {
   const params = new URLSearchParams(location.search);
   const room = (params.get("room") || "").trim().toUpperCase();
   if (room.length === 6) {
-    // Strip the param so refresh doesn't auto-rejoin a stale code
     history.replaceState(null, "", location.pathname);
     startSession("join", room);
   }
@@ -92,14 +99,11 @@ $("joinSubmit").addEventListener("click", async () => {
 
 async function startSession(intent, code = null) {
   state.intent = intent;
-
   state.ws = new GameSocket();
   bindSocket(state.ws);
   await state.ws.connect();
-  // Server will auto-generate a default nickname (Player-XXXX)
   state.ws.send("hello", { intent, code });
 
-  // Show lobby until joined / game starts
   $("lobbyTitle").textContent =
     intent === "match" ? "랜덤 매칭 중" :
     intent === "solo" ? "혼자 연습 시작" :
@@ -109,7 +113,6 @@ async function startSession(intent, code = null) {
   $("roomCode").textContent = "------";
   $("playerList").innerHTML = "";
   $("copyToast").hidden = true;
-  // Hide room code section for solo/match (no shareable code)
   $("roomCodeSection").hidden = (intent === "solo" || intent === "match");
   show("lobby");
 }
@@ -118,7 +121,14 @@ async function startSession(intent, code = null) {
 $("cancelBtn").addEventListener("click", () => leaveAndGoHome());
 $("homeBtn").addEventListener("click", () => leaveAndGoHome());
 $("startBtn").addEventListener("click", () => state.ws?.send("start"));
-$("rematchBtn").addEventListener("click", () => state.ws?.send("rematch"));
+$("rematchBtn").addEventListener("click", () => {
+  exitReplay(false);
+  state.ws?.send("rematch");
+});
+$("replayBtn").addEventListener("click", () => startReplay());
+$("exitReplayBtn").addEventListener("click", () => {
+  exitReplay(true);
+});
 
 const nickInput = $("nickInput");
 nickInput.addEventListener("change", commitNickname);
@@ -136,7 +146,6 @@ function commitNickname() {
     return;
   }
   state.ws?.send("rename", { nickname: v });
-  // Optimistic local update; server will confirm via 'renamed'
   state.myName = v;
 }
 
@@ -159,7 +168,6 @@ async function copyText(text, successMsg) {
     await navigator.clipboard.writeText(text);
     ok = true;
   } catch {
-    // Fallback for non-secure contexts
     const ta = document.createElement("textarea");
     ta.value = text;
     ta.style.position = "fixed";
@@ -178,6 +186,7 @@ async function copyText(text, successMsg) {
 }
 
 function leaveAndGoHome() {
+  exitReplay(false);
   state.ws?.send("leave");
   state.ws?.close();
   resetState();
@@ -186,18 +195,24 @@ function leaveAndGoHome() {
 
 function resetState() {
   if (state.timerInterval) clearInterval(state.timerInterval);
+  if (state.progressInterval) clearInterval(state.progressInterval);
   state.timerInterval = null;
+  state.progressInterval = null;
   state.ws = null;
   state.playerId = null;
   state.room = null;
   state.endsAt = null;
+  state.startedAt = null;
   state.myScore = 0;
-  state.oppScore = 0;
-  state.oppName = "상대";
   state.myName = "나";
-  $("hudMe").querySelector(".score").textContent = "0";
-  $("hudOpp").querySelector(".score").textContent = "0";
+  state.events = [];
+  state.scores = {};
+  state.initialBoard = null;
+  state.miniRenderers.clear();
+  state.lbItems.clear();
+  $("lbList").innerHTML = "";
   $("nickInput").value = "";
+  $("progressFill").style.width = "0%";
 }
 
 // ---- Socket bindings ----
@@ -213,7 +228,6 @@ function bindSocket(ws) {
     const m = e.detail;
     state.playerId = m.player_id;
     onRoomUpdate(m.room);
-    // Set my nickname from server-assigned default
     const me = m.room.players.find((p) => p.id === state.playerId);
     if (me) {
       state.myName = me.nickname;
@@ -244,12 +258,10 @@ function bindSocket(ws) {
     if (player_id === state.playerId) {
       state.myName = nickname;
       if (document.activeElement !== nickInput) nickInput.value = nickname;
-    } else {
-      state.oppName = nickname;
-      $("oppBoardLabel").textContent = nickname;
     }
+    const item = state.lbItems.get(player_id);
+    if (item) item.nameEl.textContent = nickname + (player_id === state.playerId ? " (me)" : "");
     renderLobby();
-    updateHud();
   });
 
   ws.addEventListener("msg:queued", (e) => {
@@ -267,54 +279,33 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:game_start", (e) => {
-    const m = e.detail;
-    state.endsAt = m.ends_at * 1000;
-    state.myScore = 0;
-    state.oppScore = 0;
-    // Both my board and opp board start from the same initial state
-    state.renderer.setBoard(m.board);
-    state.renderer.setMyDrag(null);
-    state.oppRenderer.setBoard(m.board);
-    state.oppRenderer.setMyDrag(null);
-    // Show opp board only when there is an opponent
-    const hasOpp = (state.room?.players?.length ?? 0) >= 2;
-    $("oppBoardWrap").hidden = !hasOpp;
-    if (state.room) {
-      const opp = state.room.players.find((p) => p.id !== state.playerId);
-      if (opp) {
-        state.oppName = opp.nickname;
-        $("oppBoardLabel").textContent = opp.nickname;
-      }
-    }
-    updateHud();
-    show("game");
-    startTimer();
-    requestAnimationFrame(() => {
-      state.renderer.resize();
-      state.oppRenderer.resize();
-    });
+    onGameStart(e.detail);
   });
 
   ws.addEventListener("msg:peer_drag", (e) => {
     const { player_id, r1, c1, r2, c2 } = e.detail;
     if (player_id === state.playerId) return;
-    // Show opponent's drag rect on their own (mini) board
-    state.oppRenderer.setMyDrag({ r1, c1, r2, c2 });
+    const renderer = state.miniRenderers.get(player_id);
+    renderer?.setMyDrag({ r1, c1, r2, c2 });
   });
 
   ws.addEventListener("msg:clear", (e) => {
-    const { cells, scores, player_id } = e.detail;
+    const { cells, scores, player_id, t_ms } = e.detail;
+    state.events.push({ t_ms: t_ms ?? 0, player_id, cells });
     if (player_id === state.playerId) {
-      state.renderer.clearCells(cells);
-    } else {
-      state.oppRenderer.clearCells(cells);
-      state.oppRenderer.setMyDrag(null);
+      state.bigRenderer.clearCells(cells);
     }
-    applyScores(scores);
+    const mini = state.miniRenderers.get(player_id);
+    if (mini) {
+      mini.clearCells(cells);
+      mini.setMyDrag(null);
+    }
+    state.scores = scores;
+    reorderAndRankLeaderboard();
   });
 
   ws.addEventListener("msg:reject", () => {
-    // No-op; could add visual feedback
+    // Optional visual feedback
   });
 
   ws.addEventListener("msg:game_end", (e) => {
@@ -326,12 +317,36 @@ function bindSocket(ws) {
   });
 }
 
+// ---- Game lifecycle ----
+function onGameStart(m) {
+  state.endsAt = m.ends_at * 1000;
+  state.startedAt = state.endsAt - GAME_DURATION_MS;
+  state.events = [];
+  state.initialBoard = m.board.map((row) => row.slice());
+  state.scores = {};
+  for (const p of state.room?.players ?? []) state.scores[p.id] = 0;
+
+  state.bigRenderer.setBoard(m.board);
+  state.bigRenderer.setMyDrag(null);
+
+  buildLeaderboard();
+  reorderAndRankLeaderboard();
+  $("replayBanner").hidden = true;
+
+  show("game");
+  startTimer();
+  startProgress();
+  requestAnimationFrame(() => {
+    state.bigRenderer.resize();
+    for (const r of state.miniRenderers.values()) r.resize();
+  });
+}
+
 function onRoomUpdate(room) {
   state.room = { ...room, players: [...room.players] };
   state.hostId = room.host_id;
   state.mode = room.mode;
   $("roomCode").textContent = room.id;
-  // Solo and random match: hide room code section
   $("roomCodeSection").hidden = (room.mode === "solo" || room.mode === "random");
   renderLobby();
 }
@@ -358,25 +373,72 @@ function renderLobby() {
   }
 }
 
-function applyScores(scores) {
-  for (const [pid, s] of Object.entries(scores)) {
-    if (pid === state.playerId) state.myScore = s;
-    else {
-      state.oppScore = s;
-      const opp = state.room?.players.find((p) => p.id === pid);
-      if (opp) state.oppName = opp.nickname;
-    }
+// ---- Leaderboard ----
+function buildLeaderboard() {
+  const ul = $("lbList");
+  ul.innerHTML = "";
+  state.miniRenderers.clear();
+  state.lbItems.clear();
+  const players = state.room?.players ?? [];
+  for (const p of players) {
+    const li = document.createElement("li");
+    li.className = "lb-item";
+    if (p.id === state.playerId) li.classList.add("me");
+    li.dataset.playerId = p.id;
+
+    const rankEl = document.createElement("span");
+    rankEl.className = "lb-rank";
+    rankEl.textContent = "#-";
+    const nameEl = document.createElement("span");
+    nameEl.className = "lb-name";
+    nameEl.textContent = p.nickname + (p.id === state.playerId ? " (me)" : "");
+    const scoreEl = document.createElement("span");
+    scoreEl.className = "lb-score";
+    scoreEl.textContent = "0";
+
+    const row = document.createElement("div");
+    row.className = "lb-row";
+    row.append(rankEl, nameEl, scoreEl);
+
+    const c = document.createElement("canvas");
+    c.className = "lb-mini";
+    li.append(row, c);
+    ul.appendChild(li);
+
+    const renderer = new BoardRenderer(c, { mini: true });
+    if (state.initialBoard) renderer.setBoard(state.initialBoard);
+    state.miniRenderers.set(p.id, renderer);
+    state.lbItems.set(p.id, { li, rankEl, nameEl, scoreEl });
   }
-  updateHud();
+  $("lbCount").textContent = String(players.length);
+  $("totalPlayers").textContent = String(players.length);
 }
 
-function updateHud() {
-  $("hudMe").querySelector(".name").textContent = state.myName;
-  $("hudOpp").querySelector(".name").textContent = state.oppName;
-  $("hudMe").querySelector(".score").textContent = String(state.myScore);
-  $("hudOpp").querySelector(".score").textContent = String(state.oppScore);
+function reorderAndRankLeaderboard(scoresOverride = null) {
+  const scores = scoresOverride || state.scores;
+  const players = state.room?.players ?? [];
+  // Sort by score desc, tiebreak by nickname for stability
+  const ranked = players.slice().sort((a, b) => {
+    const da = scores[a.id] || 0;
+    const db = scores[b.id] || 0;
+    if (db !== da) return db - da;
+    return a.nickname.localeCompare(b.nickname);
+  });
+  ranked.forEach((p, idx) => {
+    const item = state.lbItems.get(p.id);
+    if (!item) return;
+    item.li.style.order = String(idx);
+    item.rankEl.textContent = `#${idx + 1}`;
+    item.scoreEl.textContent = String(scores[p.id] || 0);
+    if (p.id === state.playerId) {
+      $("myRank").textContent = `#${idx + 1}`;
+      $("myScoreNum").textContent = String(scores[p.id] || 0);
+      state.myScore = scores[p.id] || 0;
+    }
+  });
 }
 
+// ---- Timer / Progress ----
 function startTimer() {
   if (state.timerInterval) clearInterval(state.timerInterval);
   const tick = () => {
@@ -397,15 +459,39 @@ function startTimer() {
   state.timerInterval = setInterval(tick, 200);
 }
 
+function startProgress() {
+  if (state.progressInterval) clearInterval(state.progressInterval);
+  const startTs = state.startedAt;
+  const fill = $("progressFill");
+  fill.classList.remove("warn", "danger");
+  const tick = () => {
+    const elapsed = Date.now() - startTs;
+    const pct = Math.min(100, (elapsed / GAME_DURATION_MS) * 100);
+    fill.style.width = pct + "%";
+    const remaining = GAME_DURATION_MS - elapsed;
+    fill.classList.toggle("warn", remaining <= 30000 && remaining > 10000);
+    fill.classList.toggle("danger", remaining <= 10000);
+    if (elapsed >= GAME_DURATION_MS) {
+      clearInterval(state.progressInterval);
+      state.progressInterval = null;
+    }
+  };
+  tick();
+  state.progressInterval = setInterval(tick, 100);
+}
+
+// ---- Result ----
 function showResult(detail) {
   if (state.timerInterval) clearInterval(state.timerInterval);
+  if (state.progressInterval) clearInterval(state.progressInterval);
   state.timerInterval = null;
+  state.progressInterval = null;
 
   const { scores, winner_id } = detail;
   const list = $("finalScores");
   list.innerHTML = "";
   const players = state.room?.players ?? [];
-  const ordered = players.slice().sort((a, b) => (a.id === state.playerId ? -1 : b.id === state.playerId ? 1 : 0));
+  const ordered = players.slice().sort((a, b) => (scores[b.id] || 0) - (scores[a.id] || 0));
   for (const p of ordered) {
     const li = document.createElement("li");
     if (p.id === winner_id) li.classList.add("winner");
@@ -415,17 +501,93 @@ function showResult(detail) {
     list.appendChild(li);
   }
   let title = "결과";
-  if (winner_id === null || winner_id === undefined) title = "무승부 🤝";
-  else if (winner_id === state.playerId) title = "승리! 🎉";
-  else title = "패배 😢";
   if (state.mode === "solo") {
-    title = `점수: ${state.myScore} / 170`;
+    title = `점수: ${scores[state.playerId] ?? 0} / 170`;
+  } else if (winner_id === null || winner_id === undefined) {
+    title = "무승부 🤝";
+  } else if (winner_id === state.playerId) {
+    title = "승리! 🎉";
+  } else {
+    title = "패배 😢";
   }
   $("resultTitle").textContent = title;
 
+  // New game button: solo always; friend host with both players; random with both
   const both = players.length === 2;
-  $("rematchBtn").hidden = !(both && (state.mode === "friend" ? state.playerId === state.hostId : true));
+  const canRematch =
+    state.mode === "solo"
+      ? true
+      : state.mode === "friend"
+        ? (state.playerId === state.hostId && both)
+        : both;
+  $("rematchBtn").hidden = !canRematch;
+  $("replayBtn").hidden = state.events.length === 0;
   show("result");
+}
+
+// ---- Replay ----
+function startReplay() {
+  if (state.replayActive || !state.initialBoard) return;
+  state.replayActive = true;
+  // Reset all boards to initial state
+  state.bigRenderer.setBoard(state.initialBoard);
+  state.bigRenderer.setMyDrag(null);
+  for (const r of state.miniRenderers.values()) {
+    r.setBoard(state.initialBoard);
+    r.setMyDrag(null);
+  }
+  // Reset score display
+  const zeroScores = {};
+  for (const p of state.room?.players ?? []) zeroScores[p.id] = 0;
+  state.scores = { ...zeroScores };
+  reorderAndRankLeaderboard();
+
+  // Show game screen with replay banner
+  $("replayBanner").hidden = false;
+  show("game");
+  requestAnimationFrame(() => {
+    state.bigRenderer.resize();
+    for (const r of state.miniRenderers.values()) r.resize();
+  });
+
+  // Schedule events
+  state.replayTimers = [];
+  const cumScores = { ...zeroScores };
+  for (const ev of state.events) {
+    const tid = setTimeout(() => {
+      const mini = state.miniRenderers.get(ev.player_id);
+      mini?.clearCells(ev.cells);
+      if (ev.player_id === state.playerId) state.bigRenderer.clearCells(ev.cells);
+      cumScores[ev.player_id] = (cumScores[ev.player_id] || 0) + ev.cells.length;
+      state.scores = { ...cumScores };
+      reorderAndRankLeaderboard();
+    }, ev.t_ms);
+    state.replayTimers.push(tid);
+  }
+
+  // Animate progress + timer over GAME_DURATION
+  const replayStart = Date.now();
+  state.startedAt = replayStart;
+  state.endsAt = replayStart + GAME_DURATION_MS;
+  startTimer();
+  startProgress();
+
+  // After duration, return to result
+  const endTid = setTimeout(() => exitReplay(true), GAME_DURATION_MS + 800);
+  state.replayTimers.push(endTid);
+}
+
+function exitReplay(returnToResult) {
+  if (!state.replayActive) return;
+  state.replayActive = false;
+  for (const tid of state.replayTimers) clearTimeout(tid);
+  state.replayTimers = [];
+  if (state.timerInterval) clearInterval(state.timerInterval);
+  if (state.progressInterval) clearInterval(state.progressInterval);
+  state.timerInterval = null;
+  state.progressInterval = null;
+  $("replayBanner").hidden = true;
+  if (returnToResult) show("result");
 }
 
 function escapeHtml(s) {

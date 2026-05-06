@@ -19,14 +19,15 @@ const OPP_BOX = "rgba(198, 40, 40, 0.18)";
 const OPP_STROKE = "#c62828";
 
 export class BoardRenderer {
-  constructor(canvas) {
+  constructor(canvas, options = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
+    this.mini = !!options.mini;
     this.board = null;
     this.myDrag = null;     // {r1,c1,r2,c2,sumOk}
     this.peerDrag = null;   // {r1,c1,r2,c2}
     this.cellSize = 0;
-    this.padding = 4;
+    this.padding = this.mini ? 2 : 4;
     this.dpr = Math.max(1, window.devicePixelRatio || 1);
     this._fadingCells = []; // [{r,c,start,duration}]
     this._raf = null;
@@ -150,29 +151,36 @@ export class BoardRenderer {
     const ctx = this.ctx;
     const cx = x + cs / 2;
     const cy = y + cs / 2;
-    const r = (cs / 2 - 2) * scale;
+    const margin = this.mini ? 0.5 : 2;
+    const r = (cs / 2 - margin) * scale;
     ctx.save();
     ctx.globalAlpha = alpha;
-    const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.2, cx, cy, r);
-    grad.addColorStop(0, APPLE_RED);
-    grad.addColorStop(1, APPLE_DARK);
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fill();
-    // stem
-    ctx.strokeStyle = "#5d4037";
-    ctx.lineWidth = Math.max(1.5, cs * 0.06);
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - r);
-    ctx.lineTo(cx + r * 0.15, cy - r - r * 0.18);
-    ctx.stroke();
-    // number
-    ctx.fillStyle = TEXT_COLOR;
-    ctx.font = `bold ${Math.floor(cs * 0.5)}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(String(value), cx, cy + 1);
+    if (this.mini) {
+      // Flat red dot, no stem, no number
+      ctx.fillStyle = APPLE_RED;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.2, cx, cy, r);
+      grad.addColorStop(0, APPLE_RED);
+      grad.addColorStop(1, APPLE_DARK);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#5d4037";
+      ctx.lineWidth = Math.max(1.5, cs * 0.06);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r);
+      ctx.lineTo(cx + r * 0.15, cy - r - r * 0.18);
+      ctx.stroke();
+      ctx.fillStyle = TEXT_COLOR;
+      ctx.font = `bold ${Math.floor(cs * 0.5)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(value), cx, cy + 1);
+    }
     ctx.restore();
   }
 

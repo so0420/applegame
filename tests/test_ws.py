@@ -157,3 +157,7 @@ def test_solo_submit_and_clear():
         msg = ws.receive_json()
         assert msg["type"] == "clear"
         assert len(msg["cells"]) == 2
+        # t_ms must be present for replay
+        assert "t_ms" in msg
+        assert isinstance(msg["t_ms"], int)
+        assert msg["t_ms"] >= 0

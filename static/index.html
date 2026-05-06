@@ -62,28 +62,38 @@
     </section>
 
     <!-- Game -->
-    <section class="screen" id="game" hidden>
-      <header class="hud">
-        <div class="player me" id="hudMe">
-          <span class="name">나</span>
-          <span class="score">0</span>
+    <section class="screen game-screen" id="game" hidden>
+      <header class="game-bar">
+        <div class="game-stat">
+          <span class="muted">점수</span>
+          <strong id="myScoreNum">0</strong>
+          <span class="muted">/ 170</span>
         </div>
-        <div class="timer" id="timer">2:00</div>
-        <div class="player opp" id="hudOpp">
-          <span class="name">상대</span>
-          <span class="score">0</span>
+        <div class="game-stat center">
+          <strong id="myRank">#1</strong>
+          <span class="muted">/ <span id="totalPlayers">1</span></span>
+        </div>
+        <div class="game-stat">
+          <span class="muted">⏱</span>
+          <strong id="timer">2:00</strong>
         </div>
       </header>
-      <div class="boards">
-        <div class="board-wrap my">
-          <div class="board-label">내 보드</div>
+      <div class="progress">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div id="replayBanner" class="replay-banner" hidden>
+        <span>리플레이 모드</span>
+        <button id="exitReplayBtn" class="chip-btn">그만 보기</button>
+      </div>
+      <div class="game-layout">
+        <aside class="leaderboard">
+          <h3>LEADERBOARD <span class="muted">(<span id="lbCount">0</span>)</span></h3>
+          <ul id="lbList"></ul>
+        </aside>
+        <main class="board-area">
           <canvas id="board"></canvas>
           <div id="sumBadge" class="sum-badge" hidden>0</div>
-        </div>
-        <div class="board-wrap opp" id="oppBoardWrap" hidden>
-          <div class="board-label" id="oppBoardLabel">상대</div>
-          <canvas id="oppBoard"></canvas>
-        </div>
+        </main>
       </div>
     </section>
 
@@ -93,7 +103,8 @@
       <div class="section">
         <ul id="finalScores"></ul>
         <div class="result-actions">
-          <button id="rematchBtn" hidden>재대결</button>
+          <button id="replayBtn" class="ghost">리플레이 보기</button>
+          <button id="rematchBtn">새 게임</button>
           <button id="homeBtn" class="ghost">홈으로</button>
         </div>
       </div>
