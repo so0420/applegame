@@ -7,6 +7,7 @@ const GAME_DURATION_MS = 120 * 1000;
 
 const screens = {
   home: $("home"),
+  joinScreen: $("joinScreen"),
   lobby: $("lobby"),
   game: $("game"),
   result: $("result"),
@@ -81,21 +82,33 @@ document.querySelectorAll(".mode").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const intent = btn.dataset.intent;
     if (intent === "join-open") {
-      $("joinRow").hidden = !$("joinRow").hidden;
+      $("joinCode").value = "";
+      show("joinScreen");
+      $("joinCode").focus();
       return;
     }
     await startSession(intent);
   });
 });
 
-$("joinSubmit").addEventListener("click", async () => {
+$("joinBackBtn").addEventListener("click", () => show("home"));
+
+$("joinSubmit").addEventListener("click", () => submitJoinCode());
+$("joinCode").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    submitJoinCode();
+  }
+});
+
+async function submitJoinCode() {
   const code = $("joinCode").value.trim().toUpperCase();
   if (code.length !== 6) {
     alert("6자리 코드를 입력하세요.");
     return;
   }
   await startSession("join", code);
-});
+}
 
 async function startSession(intent, code = null) {
   state.intent = intent;

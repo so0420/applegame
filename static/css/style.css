@@ -155,18 +155,12 @@ button.ghost:hover {
   margin-top: 4px;
 }
 .center-btn button { min-width: 160px; }
-.join-code-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-}
-.join-code-row input {
-  flex: 1;
+#joinCode {
   text-transform: uppercase;
-  letter-spacing: 4px;
+  letter-spacing: 6px;
   text-align: center;
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
 }
 
 /* Lobby */

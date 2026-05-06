@@ -21,11 +21,23 @@
           <button class="mode secondary" data-intent="create">방 만들기</button>
           <button class="mode secondary" data-intent="join-open">코드로 입장</button>
         </div>
-        <div class="join-code-row" id="joinRow" hidden>
-          <input id="joinCode" maxlength="6" placeholder="6자리 코드" autocomplete="off">
-          <button id="joinSubmit">입장</button>
-        </div>
         <p class="helper">* 합이 10이 되도록 사과를 드래그하세요. 2분 안에 더 많이 지운 쪽 승!</p>
+      </div>
+    </section>
+
+    <!-- Join with code -->
+    <section class="screen" id="joinScreen" hidden>
+      <h2>코드로 입장</h2>
+
+      <div class="section">
+        <h3>방 코드 입력</h3>
+        <div class="field">
+          <input id="joinCode" maxlength="6" placeholder="6자리 코드" autocomplete="off">
+        </div>
+        <div class="lobby-actions">
+          <button id="joinSubmit">입장</button>
+          <button id="joinBackBtn" class="ghost">뒤로</button>
+        </div>
       </div>
     </section>
 
