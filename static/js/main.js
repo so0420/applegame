@@ -115,7 +115,7 @@ function showReconnectOverlay(on) {
     _overlayTimer = setTimeout(() => {
       _overlayTimer = null;
       $("reconnectOverlay").hidden = false;
-    }, 250);
+    }, 1000);
   } else {
     if (_overlayTimer) {
       clearTimeout(_overlayTimer);
