@@ -156,8 +156,12 @@ $("rematchBtn").addEventListener("click", () => {
   state.ws?.send("rematch");
 });
 $("replayBtn").addEventListener("click", () => startReplay());
-$("exitReplayBtn").addEventListener("click", () => {
-  exitReplay(true);
+
+// ESC exits replay early
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.replayActive) {
+    exitReplay(true);
+  }
 });
 
 const nickInput = $("nickInput");
@@ -370,7 +374,6 @@ function onGameStart(m) {
 
   buildLeaderboard();
   reorderAndRankLeaderboard();
-  $("replayBanner").hidden = true;
 
   show("game");
   startTimer();
@@ -603,8 +606,6 @@ function startReplay() {
   state.scores = { ...zeroScores };
   reorderAndRankLeaderboard();
 
-  // Show game screen with replay banner
-  $("replayBanner").hidden = false;
   show("game");
   requestAnimationFrame(() => {
     state.bigRenderer.resize();
@@ -647,7 +648,6 @@ function exitReplay(returnToResult) {
   if (state.progressInterval) clearInterval(state.progressInterval);
   state.timerInterval = null;
   state.progressInterval = null;
-  $("replayBanner").hidden = true;
   if (returnToResult) show("result");
 }
 
