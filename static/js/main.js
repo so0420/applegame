@@ -462,6 +462,18 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:error", (e) => {
+    if (e.detail.code === "already_connected") {
+      // Another tab/window is using this session. Don't clearSession()
+      // so the original tab keeps working; just go to home here.
+      alert("이미 다른 창에서 접속 중입니다. 한 곳에서만 사용해주세요.");
+      try { state.ws?.close(); } catch {}
+      // Bypass resetState's clear-on-close path
+      state.ws = null;
+      state.playerId = null;
+      state.room = null;
+      show("home");
+      return;
+    }
     console.warn("server error:", e.detail);
   });
 }

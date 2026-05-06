@@ -74,12 +74,16 @@ async def session(
                     await ws.send_json(S.msg(S.NOT_FOUND))
                     await ws.close()
                     return
-                # Replace WS, mark connected
-                if existing.ws is not None and existing.ws is not ws:
-                    try:
-                        await existing.ws.close()
-                    except Exception:
-                        pass
+                # Reject if another live session already owns this player slot.
+                # The original tab keeps playing; the new tab is told why.
+                if existing.connected and existing.ws is not None:
+                    await ws.send_json(S.msg(
+                        S.ERROR,
+                        code="already_connected",
+                        message="another tab is already connected to this game",
+                    ))
+                    await ws.close()
+                    return
                 existing.ws = ws
                 existing.connected = True
             # Cancel any pending room cleanup
@@ -157,7 +161,7 @@ async def session(
     except Exception:
         log.exception("session error")
     finally:
-        await _cleanup(player, room, manager, matchmaker)
+        await _cleanup(player, room, manager, matchmaker, my_ws=ws)
 
 
 async def _message_loop(
@@ -321,18 +325,23 @@ async def _cleanup(
     room: Room | None,
     manager: RoomManager,
     matchmaker: Matchmaker,
+    my_ws: WebSocket | None = None,
 ) -> None:
     if player is None:
         return
-    player.connected = False
-    # Drop their stale WS handle so future broadcasts don't try to send to it
-    player.ws = None
     if matchmaker:
         await matchmaker.cancel(player.id)
     if room is None:
         return
 
     async with room.lock:
+        # Only mark this player disconnected if WE are still the active
+        # session for them. If a newer connection has already taken over
+        # (or rejected our reconnect), our cleanup must not stomp the slot.
+        if player.ws is not None and player.ws is not my_ws:
+            return
+        player.connected = False
+        player.ws = None
         in_room = player.id in room.players
         state = room.state
 

@@ -256,6 +256,37 @@ def test_reconnect_restores_session():
             assert peer_rc["player_id"] == guest_id
 
 
+def test_second_reconnect_while_first_active_is_rejected():
+    """If a session is already active for player P, a second reconnect
+    attempt with the same player_id is rejected (the first tab keeps
+    playing, the second tab is told to back off)."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host_ws:
+        host_ws.send_json({"type": "hello", "intent": "create"})
+        host_joined = host_ws.receive_json()
+        room_id = host_joined["room"]["id"]
+        with client.websocket_connect("/ws") as guest_ws:
+            guest_ws.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest_joined = guest_ws.receive_json()
+            guest_id = guest_joined["player_id"]
+            host_ws.receive_json()        # peer_joined
+            host_ws.send_json({"type": "start"})
+            host_ws.receive_json()
+            guest_ws.receive_json()       # game_start
+
+            # Guest is still connected — a second reconnect for them must be rejected
+            with client.websocket_connect("/ws") as second_tab:
+                second_tab.send_json({
+                    "type": "hello",
+                    "intent": "reconnect",
+                    "player_id": guest_id,
+                    "room_id": room_id,
+                })
+                msg = second_tab.receive_json()
+                assert msg["type"] == "error"
+                assert msg["code"] == "already_connected"
+
+
 def test_reconnect_unknown_room_returns_not_found():
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
