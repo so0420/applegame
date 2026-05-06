@@ -23,7 +23,7 @@ from .manager import RoomManager, broadcast, make_player, send
 
 log = logging.getLogger(__name__)
 
-DISCONNECT_GRACE = 30.0  # seconds
+DISCONNECT_GRACE = 300.0  # seconds — keep room alive when all players disconnected
 
 
 def _parse_capacity(raw: object) -> int:
@@ -60,7 +60,55 @@ async def session(
 
         player = make_player(nickname, ws=ws)
 
-        if intent == "solo":
+        if intent == "reconnect":
+            target_pid = (hello.get("player_id") or "").strip()
+            target_rid = (hello.get("room_id") or "").strip().upper()
+            r = manager.get(target_rid)
+            if r is None:
+                await ws.send_json(S.msg(S.NOT_FOUND))
+                await ws.close()
+                return
+            async with r.lock:
+                existing = r.players.get(target_pid)
+                if existing is None or r.state == "waiting":
+                    await ws.send_json(S.msg(S.NOT_FOUND))
+                    await ws.close()
+                    return
+                # Replace WS, mark connected
+                if existing.ws is not None and existing.ws is not ws:
+                    try:
+                        await existing.ws.close()
+                    except Exception:
+                        pass
+                existing.ws = ws
+                existing.connected = True
+            # Cancel any pending room cleanup
+            if r.cleanup_task and not r.cleanup_task.done():
+                r.cleanup_task.cancel()
+                r.cleanup_task = None
+            player = existing
+            room = r
+            await send(player, S.msg(
+                S.RECONNECTED,
+                player_id=player.id,
+                room=room.public(),
+                boards=room.boards,
+                initial_board=room.initial_board,
+                events=room.events,
+                scores={p.id: p.score for p in room.players.values()},
+                ends_at=room.ends_at,
+                state=room.state,
+                winner_id=room.winner_id,
+            ))
+            await broadcast(
+                room,
+                S.msg(S.PEER_RECONNECTED, player_id=player.id),
+                exclude=player.id,
+            )
+            # Skip the join/auto-start blocks — go straight to the message loop
+            await _message_loop(ws, player, room, manager)
+            return
+        elif intent == "solo":
             room = await manager.create_room("solo", player)
         elif intent == "create":
             room = await manager.create_room("friend", player, capacity=CAPACITY_DEFAULT)
@@ -185,7 +233,7 @@ async def _start_game(room: Room) -> None:
         if room.state == "playing":
             return
         room.start()
-        initial = room.initial_board()
+        initial = room.initial_board
     await broadcast(
         room,
         S.msg(S.GAME_START, board=initial, ends_at=room.ends_at),
@@ -222,6 +270,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         room.apples_left[player.id] -= gained
         scores = {p.id: p.score for p in room.players.values()}
         t_ms = int((now - room.started_at) * 1000) if room.started_at else 0
+        room.events.append({"t_ms": t_ms, "player_id": player.id, "cells": cells})
 
     await broadcast(
         room,
@@ -269,6 +318,8 @@ async def _cleanup(
     if player is None:
         return
     player.connected = False
+    # Drop their stale WS handle so future broadcasts don't try to send to it
+    player.ws = None
     if matchmaker:
         await matchmaker.cancel(player.id)
     if room is None:
@@ -276,21 +327,48 @@ async def _cleanup(
 
     async with room.lock:
         in_room = player.id in room.players
-        playing = room.state == "playing"
+        state = room.state
 
     if not in_room:
         return
 
-    if playing:
-        # Forfeit: remaining player wins by abandonment
+    if state == "waiting":
+        # Lobby disconnect → remove from room (no reconnect for lobby).
         async with room.lock:
             room.players.pop(player.id, None)
+            empty = not room.players
         await broadcast(room, S.msg(S.PEER_LEFT, player_id=player.id))
-        await _end_game(room)
-        await manager.remove(room.id)
-    else:
-        async with room.lock:
-            room.players.pop(player.id, None)
-        await broadcast(room, S.msg(S.PEER_LEFT, player_id=player.id))
-        if not room.players:
+        if empty:
             await manager.remove(room.id)
+        return
+
+    # state == "playing" or "finished": keep them in the room so they can
+    # reconnect. Game does NOT end on disconnect.
+    await broadcast(room, S.msg(S.PEER_DISCONNECTED, player_id=player.id))
+
+    async with room.lock:
+        all_disc = all(not p.connected for p in room.players.values())
+    if all_disc:
+        _schedule_room_cleanup(room, manager)
+
+
+def _schedule_room_cleanup(room: Room, manager: RoomManager) -> None:
+    """If everyone is disconnected, wipe the room after DISCONNECT_GRACE."""
+    if room.cleanup_task and not room.cleanup_task.done():
+        return  # already scheduled
+
+    async def cleanup_after() -> None:
+        try:
+            await asyncio.sleep(DISCONNECT_GRACE)
+            async with room.lock:
+                still_all_disc = all(not p.connected for p in room.players.values())
+            if not still_all_disc:
+                return
+            # End game if still playing, then drop the room
+            if room.state == "playing":
+                await _end_game(room)
+            await manager.remove(room.id)
+        except asyncio.CancelledError:
+            pass
+
+    room.cleanup_task = asyncio.create_task(cleanup_after())

@@ -154,6 +154,86 @@ def test_rename_broadcasts_to_room():
             assert guest_msg["nickname"] == "AppleKing"
 
 
+def test_disconnect_during_play_does_not_end_game():
+    """When one player drops, the room stays alive and the game keeps
+    running for everyone else."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host_ws:
+        host_ws.send_json({"type": "hello", "intent": "create"})
+        host_joined = host_ws.receive_json()
+        room_id = host_joined["room"]["id"]
+
+        with client.websocket_connect("/ws") as guest_ws:
+            guest_ws.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest_ws.receive_json()  # joined
+            host_ws.receive_json()   # peer_joined
+            host_ws.send_json({"type": "start"})
+            host_ws.receive_json()   # game_start
+            guest_ws.receive_json()  # game_start
+
+            # Guest disconnects
+        # Host should see peer_disconnected, NOT game_end
+        msg = host_ws.receive_json()
+        assert msg["type"] == "peer_disconnected"
+        # Game state should still be playing — verify host can still submit
+        # (we do not force a real submit since it depends on the random
+        # board, just confirm no game_end arrived).
+
+
+def test_reconnect_restores_session():
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host_ws:
+        host_ws.send_json({"type": "hello", "intent": "create"})
+        host_joined = host_ws.receive_json()
+        room_id = host_joined["room"]["id"]
+
+        with client.websocket_connect("/ws") as guest_ws:
+            guest_ws.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest_joined = guest_ws.receive_json()
+            guest_id = guest_joined["player_id"]
+            host_ws.receive_json()  # peer_joined
+            host_ws.send_json({"type": "start"})
+            host_ws.receive_json()
+            guest_ws.receive_json()
+            # Guest disconnects
+        # Host gets peer_disconnected
+        peer_disc = host_ws.receive_json()
+        assert peer_disc["type"] == "peer_disconnected"
+
+        # Now guest reconnects with their player_id
+        with client.websocket_connect("/ws") as guest_ws2:
+            guest_ws2.send_json({
+                "type": "hello",
+                "intent": "reconnect",
+                "player_id": guest_id,
+                "room_id": room_id,
+            })
+            reconnected = guest_ws2.receive_json()
+            assert reconnected["type"] == "reconnected"
+            assert reconnected["player_id"] == guest_id
+            assert reconnected["state"] == "playing"
+            assert "boards" in reconnected
+            assert "initial_board" in reconnected
+            assert "events" in reconnected
+            # Host should see peer_reconnected
+            peer_rc = host_ws.receive_json()
+            assert peer_rc["type"] == "peer_reconnected"
+            assert peer_rc["player_id"] == guest_id
+
+
+def test_reconnect_unknown_room_returns_not_found():
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({
+            "type": "hello",
+            "intent": "reconnect",
+            "player_id": "deadbeef",
+            "room_id": "ZZZZZZ",
+        })
+        msg = ws.receive_json()
+        assert msg["type"] == "not_found"
+
+
 def test_join_unknown_room():
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:

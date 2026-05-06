@@ -53,6 +53,5 @@ def test_initial_board_returns_starting_state():
     a = Player(id="a", nickname="A")
     r.players = {"a": a}
     r.start()
-    initial = r.initial_board()
-    assert initial == r.boards["a"]
-    assert len(initial) == 10 and len(initial[0]) == 17
+    assert r.initial_board == r.boards["a"]
+    assert len(r.initial_board) == 10 and len(r.initial_board[0]) == 17

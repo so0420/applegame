@@ -72,13 +72,59 @@ attachDragInput(canvas, state.bigRenderer, {
   },
 });
 
-// ---- Auto-join via ?room=XXXXXX ----
-(function autoJoinFromUrl() {
+// ---- Session persistence for reconnect ----
+const SESSION_KEY = "apple-session";
+const SESSION_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+
+function saveSession() {
+  if (!state.playerId || !state.room?.id) return;
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      player_id: state.playerId,
+      room_id: state.room.id,
+      ts: Date.now(),
+    }));
+  } catch {}
+}
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s.player_id || !s.room_id) return null;
+    if (Date.now() - (s.ts || 0) > SESSION_MAX_AGE_MS) return null;
+    return s;
+  } catch { return null; }
+}
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
+}
+
+// ---- Auto-actions on page load ----
+(async function bootstrap() {
+  // 1) Try resuming an in-progress game first
+  const sess = loadSession();
+  if (sess) {
+    state.ws = new GameSocket();
+    bindSocket(state.ws);
+    try {
+      await state.ws.connect();
+      state.ws.send("hello", {
+        intent: "reconnect",
+        player_id: sess.player_id,
+        room_id: sess.room_id,
+      });
+      return;
+    } catch {
+      clearSession();
+    }
+  }
+  // 2) Else, fall back to ?room=XXXXXX auto-join
   const params = new URLSearchParams(location.search);
-  const room = (params.get("room") || "").trim().toUpperCase();
-  if (room.length === 6) {
+  const code = (params.get("room") || "").trim().toUpperCase();
+  if (code.length === 6) {
     history.replaceState(null, "", location.pathname);
-    startSession("join", room);
+    startSession("join", code);
   }
 })();
 
@@ -228,6 +274,7 @@ function leaveAndGoHome() {
   exitReplay(false);
   state.ws?.send("leave");
   state.ws?.close();
+  clearSession();
   resetState();
   show("home");
 }
@@ -317,7 +364,10 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:not_found", () => {
-    alert("방을 찾을 수 없습니다.");
+    // If we got here from a silent reconnect attempt, just go home cleanly
+    const fromReconnect = state.playerId === null && state.room === null;
+    clearSession();
+    if (!fromReconnect) alert("방을 찾을 수 없습니다.");
     leaveAndGoHome();
   });
 
@@ -328,6 +378,23 @@ function bindSocket(ws) {
 
   ws.addEventListener("msg:game_start", (e) => {
     onGameStart(e.detail);
+    saveSession();
+  });
+
+  ws.addEventListener("msg:reconnected", (e) => {
+    onReconnected(e.detail);
+  });
+
+  ws.addEventListener("msg:peer_disconnected", (e) => {
+    const pid = e.detail.player_id;
+    const item = state.lbItems.get(pid);
+    if (item) item.li.classList.add("disconnected");
+  });
+
+  ws.addEventListener("msg:peer_reconnected", (e) => {
+    const pid = e.detail.player_id;
+    const item = state.lbItems.get(pid);
+    if (item) item.li.classList.remove("disconnected");
   });
 
   ws.addEventListener("msg:peer_drag", (e) => {
@@ -358,11 +425,66 @@ function bindSocket(ws) {
 
   ws.addEventListener("msg:game_end", (e) => {
     showResult(e.detail);
+    clearSession();
   });
 
   ws.addEventListener("msg:error", (e) => {
     console.warn("server error:", e.detail);
   });
+}
+
+// ---- Reconnection ----
+function onReconnected(m) {
+  state.playerId = m.player_id;
+  onRoomUpdate(m.room);
+  state.events = (m.events || []).map((e) => ({
+    t_ms: e.t_ms, player_id: e.player_id, cells: e.cells,
+  }));
+  state.scores = m.scores || {};
+  state.endsAt = (m.ends_at || 0) * 1000;
+  state.startedAt = state.endsAt - GAME_DURATION_MS;
+  state.initialBoard = m.initial_board ? m.initial_board.map((row) => row.slice()) : null;
+
+  const me = m.room.players.find((p) => p.id === state.playerId);
+  if (me) {
+    state.myName = me.nickname;
+    nickInput.value = me.nickname;
+  }
+
+  // Build leaderboard, then set each player's current board state
+  buildLeaderboard();
+  if (m.boards) {
+    const myBoard = m.boards[state.playerId];
+    if (myBoard) state.bigRenderer.setBoard(myBoard);
+    for (const [pid, board] of Object.entries(m.boards)) {
+      const mini = state.miniRenderers.get(pid);
+      if (mini) mini.setBoard(board);
+    }
+  }
+  // Mark currently disconnected peers
+  for (const p of m.room.players) {
+    if (p.connected === false) {
+      const item = state.lbItems.get(p.id);
+      if (item) item.li.classList.add("disconnected");
+    }
+  }
+  reorderAndRankLeaderboard();
+
+  if (m.state === "playing") {
+    show("game");
+    startTimer();
+    startProgress();
+    saveSession();
+    requestAnimationFrame(() => {
+      state.bigRenderer.resize();
+      for (const r of state.miniRenderers.values()) r.resize();
+    });
+  } else if (m.state === "finished") {
+    showResult({ scores: m.scores || {}, winner_id: m.winner_id ?? null });
+    clearSession();
+  } else {
+    show("game");
+  }
 }
 
 // ---- Game lifecycle ----

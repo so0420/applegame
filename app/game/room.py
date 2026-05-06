@@ -49,6 +49,8 @@ class Room:
     host_id: str | None = None
     players: dict[str, Player] = field(default_factory=dict)
     boards: dict[str, list[list[int]]] = field(default_factory=dict)
+    initial_board: list[list[int]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
     state: RoomState = "waiting"
     started_at: float | None = None
     ends_at: float | None = None
@@ -56,6 +58,7 @@ class Room:
     winner_id: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     timer_task: asyncio.Task | None = None
+    cleanup_task: asyncio.Task | None = None
 
     @property
     def is_full(self) -> bool:
@@ -95,14 +98,10 @@ class Room:
     def _init_boards(self) -> None:
         """Generate one master board, deep-copy per player."""
         master = generate_board()
+        self.initial_board = [row[:] for row in master]
         self.boards = {pid: [row[:] for row in master] for pid in self.players}
         self.apples_left = {pid: TOTAL for pid in self.players}
-
-    def initial_board(self) -> list[list[int]]:
-        """Master starting state, sent in game_start. All players begin here."""
-        if not self.boards:
-            return []
-        return next(iter(self.boards.values()))
+        self.events = []
 
     def determine_winner(self) -> str | None:
         if not self.players:

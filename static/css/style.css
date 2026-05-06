@@ -412,6 +412,12 @@ button.ghost:hover {
 }
 .lb-item:last-child { border-bottom: none; }
 .lb-item.me .lb-name { color: var(--accent); }
+.lb-item.disconnected { opacity: 0.55; }
+.lb-item.disconnected .lb-rank::before {
+  content: "⏸ ";
+  color: var(--muted);
+  font-size: 11px;
+}
 .lb-row {
   display: flex;
   align-items: baseline;
