@@ -17,6 +17,9 @@ function show(name) {
     screens[key].hidden = key !== name;
   }
 }
+function allScreensHidden() {
+  return Object.values(screens).every((el) => el.hidden);
+}
 
 const state = {
   ws: null,
@@ -105,32 +108,14 @@ function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch {}
 }
 
-// Overlay only appears if the reconnect actually takes a moment — fast
-// responses (stale session → NOT_FOUND, healthy reconnect) skip it
-// entirely and go straight to home / game.
-let _overlayTimer = null;
-function showReconnectOverlay(on) {
-  if (on) {
-    if (_overlayTimer || !$("reconnectOverlay").hidden) return;
-    _overlayTimer = setTimeout(() => {
-      _overlayTimer = null;
-      $("reconnectOverlay").hidden = false;
-    }, 1000);
-  } else {
-    if (_overlayTimer) {
-      clearTimeout(_overlayTimer);
-      _overlayTimer = null;
-    }
-    $("reconnectOverlay").hidden = true;
-  }
-}
-
 // ---- Auto-actions on page load ----
+// Home is hidden by default in HTML so we don't flash it during a
+// reconnect attempt. Bootstrap is responsible for revealing whichever
+// screen is appropriate.
 (async function bootstrap() {
   // 1) Try resuming an in-progress game first
   const sess = loadSession();
   if (sess) {
-    showReconnectOverlay(true);
     state.ws = new GameSocket();
     bindSocket(state.ws);
     try {
@@ -140,10 +125,9 @@ function showReconnectOverlay(on) {
         player_id: sess.player_id,
         room_id: sess.room_id,
       });
-      return;
+      return; // success/failure handlers will pick the screen
     } catch {
       clearSession();
-      showReconnectOverlay(false);
     }
   }
   // 2) Else, fall back to ?room=XXXXXX auto-join
@@ -151,8 +135,11 @@ function showReconnectOverlay(on) {
   const code = (params.get("room") || "").trim().toUpperCase();
   if (code.length === 6) {
     history.replaceState(null, "", location.pathname);
-    startSession("join", code);
+    await startSession("join", code);
+    return;
   }
+  // 3) Nothing to do — show home
+  show("home");
 })();
 
 // ---- Home screen ----
@@ -338,7 +325,12 @@ function resetState() {
 // ---- Socket bindings ----
 function bindSocket(ws) {
   ws.addEventListener("close", () => {
-    showReconnectOverlay(false);
+    // If the close came before any screen was shown (e.g. reconnect
+    // attempt aborted), default to home.
+    if (allScreensHidden()) {
+      show("home");
+      return;
+    }
     if (!screens.home.hidden) return;
     alert("연결이 종료되었습니다.");
     resetState();
@@ -401,7 +393,6 @@ function bindSocket(ws) {
   ws.addEventListener("msg:not_found", () => {
     // If we got here from a silent reconnect attempt, just go home cleanly
     const fromReconnect = state.playerId === null && state.room === null;
-    showReconnectOverlay(false);
     clearSession();
     if (!fromReconnect) alert("방을 찾을 수 없습니다.");
     leaveAndGoHome();
@@ -418,7 +409,6 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:reconnected", (e) => {
-    showReconnectOverlay(false);
     onReconnected(e.detail);
   });
 
@@ -490,7 +480,6 @@ function bindSocket(ws) {
     if (e.detail.code === "already_connected") {
       // Another tab/window is using this session. Don't clearSession()
       // so the original tab keeps working; just go to home here.
-      showReconnectOverlay(false);
       alert("이미 다른 창에서 접속 중입니다. 한 곳에서만 사용해주세요.");
       try { state.ws?.close(); } catch {}
       // Bypass resetState's clear-on-close path
