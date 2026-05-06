@@ -166,48 +166,26 @@ button.ghost:hover {
 .capacity-control {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 6px;
+  gap: 10px;
+  justify-content: center;
 }
-.capacity-control input[type="range"] {
-  flex: 1;
-  -webkit-appearance: none;
-  appearance: none;
-  height: 6px;
-  background: var(--border);
-  border-radius: 999px;
-  outline: none;
-  margin: 0;
-}
-.capacity-control input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 22px;
-  height: 22px;
-  background: var(--accent);
-  border-radius: 50%;
-  cursor: pointer;
-}
-.capacity-control input[type="range"]::-moz-range-thumb {
-  width: 22px;
-  height: 22px;
-  background: var(--accent);
-  border-radius: 50%;
-  cursor: pointer;
-  border: none;
-}
-.capacity-display {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  min-width: 70px;
-  justify-content: flex-end;
-}
-.capacity-display span:first-child {
-  font-size: 28px;
+.capacity-control input[type="number"] {
+  width: 110px;
+  text-align: center;
+  font-size: 22px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  -moz-appearance: textfield;
+}
+.capacity-control input[type="number"]:disabled {
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.capacity-control input[type="number"]::-webkit-outer-spin-button,
+.capacity-control input[type="number"]::-webkit-inner-spin-button {
+  height: 30px;
+  cursor: pointer;
 }
 
 /* Lobby */

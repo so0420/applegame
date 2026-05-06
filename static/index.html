@@ -25,24 +25,6 @@
       </div>
     </section>
 
-    <!-- Create room settings -->
-    <section class="screen" id="createScreen" hidden>
-      <h2>방 만들기</h2>
-
-      <div class="section">
-        <h3>최대 인원</h3>
-        <div class="capacity-control">
-          <input id="capacityRange" type="range" min="2" max="50" step="1" value="10">
-          <div class="capacity-display"><span id="capacityValue">10</span><span class="muted">명</span></div>
-        </div>
-        <p class="helper">최소 2명 ~ 최대 50명</p>
-        <div class="lobby-actions">
-          <button id="createConfirmBtn">방 만들기</button>
-          <button id="createBackBtn" class="ghost">뒤로</button>
-        </div>
-      </div>
-    </section>
-
     <!-- Join with code -->
     <section class="screen" id="joinScreen" hidden>
       <h2>코드로 입장</h2>
@@ -78,6 +60,15 @@
         <div class="field">
           <input id="nickInput" maxlength="20" placeholder="닉네임 (최대 20자)" autocomplete="off">
         </div>
+      </div>
+
+      <div class="section" id="capacitySection" hidden>
+        <h3>최대 인원</h3>
+        <div class="capacity-control">
+          <input id="capacityInput" type="number" min="2" max="50" step="1" value="10">
+          <span class="muted">명</span>
+        </div>
+        <p class="helper" id="capacityHelper">호스트만 변경할 수 있습니다 (2~50명)</p>
       </div>
 
       <div class="section">

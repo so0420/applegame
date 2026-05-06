@@ -63,8 +63,7 @@ async def session(
         if intent == "solo":
             room = await manager.create_room("solo", player)
         elif intent == "create":
-            cap = _parse_capacity(hello.get("capacity"))
-            room = await manager.create_room("friend", player, capacity=cap)
+            room = await manager.create_room("friend", player, capacity=CAPACITY_DEFAULT)
         elif intent == "join":
             room = manager.get(code)
             if room is None:
@@ -120,7 +119,22 @@ async def _message_loop(
         data = await ws.receive_json()
         mtype = data.get("type")
 
-        if mtype == S.RENAME:
+        if mtype == S.SET_CAPACITY:
+            if room.mode != "friend":
+                continue
+            if player.id != room.host_id:
+                continue
+            if room.state != "waiting":
+                continue
+            new_cap = _parse_capacity(data.get("capacity"))
+            # Cannot drop capacity below current player count
+            new_cap = max(new_cap, len(room.players))
+            new_cap = min(CAPACITY_MAX, new_cap)
+            async with room.lock:
+                room.capacity = new_cap
+            await broadcast(room, S.msg(S.CAPACITY_CHANGED, capacity=new_cap))
+
+        elif mtype == S.RENAME:
             new = (data.get("nickname") or "").strip()[:20]
             if not new:
                 continue

@@ -60,28 +60,65 @@ def test_create_room_default_capacity_is_10():
         assert joined["room"]["capacity"] == 10
 
 
-def test_create_room_custom_capacity():
+def test_set_capacity_host_changes_value():
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({"type": "hello", "intent": "create", "capacity": 25})
-        joined = ws.receive_json()
-        assert joined["room"]["capacity"] == 25
+        ws.send_json({"type": "hello", "intent": "create"})
+        ws.receive_json()  # joined
+        ws.send_json({"type": "set_capacity", "capacity": 25})
+        msg = ws.receive_json()
+        assert msg["type"] == "capacity_changed"
+        assert msg["capacity"] == 25
 
 
-def test_create_room_capacity_clamped():
+def test_set_capacity_clamped_to_range():
     client = TestClient(app)
-    # too small → clamped to 2
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({"type": "hello", "intent": "create", "capacity": 1})
-        assert ws.receive_json()["room"]["capacity"] == 2
-    # too large → clamped to 50
-    with client.websocket_connect("/ws") as ws:
-        ws.send_json({"type": "hello", "intent": "create", "capacity": 999})
-        assert ws.receive_json()["room"]["capacity"] == 50
-    # garbage → default
-    with client.websocket_connect("/ws") as ws:
-        ws.send_json({"type": "hello", "intent": "create", "capacity": "abc"})
-        assert ws.receive_json()["room"]["capacity"] == 10
+        ws.send_json({"type": "hello", "intent": "create"})
+        ws.receive_json()
+        ws.send_json({"type": "set_capacity", "capacity": 1})
+        assert ws.receive_json()["capacity"] == 2  # clamped to min (current = 1, but min absolute is 2)
+        ws.send_json({"type": "set_capacity", "capacity": 999})
+        assert ws.receive_json()["capacity"] == 50
+
+
+def test_set_capacity_cannot_go_below_current_players():
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host_ws:
+        host_ws.send_json({"type": "hello", "intent": "create"})
+        host_joined = host_ws.receive_json()
+        room_id = host_joined["room"]["id"]
+        with client.websocket_connect("/ws") as guest_ws:
+            guest_ws.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest_ws.receive_json()  # joined
+            host_ws.receive_json()   # peer_joined
+            # Try to drop capacity to 1 — should clamp to current player count (2)
+            host_ws.send_json({"type": "set_capacity", "capacity": 1})
+            host_msg = host_ws.receive_json()
+            guest_msg = guest_ws.receive_json()
+            assert host_msg["type"] == "capacity_changed"
+            assert host_msg["capacity"] == 2
+            assert guest_msg["capacity"] == 2
+
+
+def test_set_capacity_ignored_for_non_host():
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host_ws:
+        host_ws.send_json({"type": "hello", "intent": "create"})
+        host_joined = host_ws.receive_json()
+        room_id = host_joined["room"]["id"]
+        with client.websocket_connect("/ws") as guest_ws:
+            guest_ws.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest_ws.receive_json()
+            host_ws.receive_json()
+            # Guest tries to change capacity — server ignores
+            guest_ws.send_json({"type": "set_capacity", "capacity": 30})
+            # Now host renames to verify the channel is still flowing and
+            # no capacity_changed slipped through first
+            guest_ws.send_json({"type": "rename", "nickname": "guest_new"})
+            msg = guest_ws.receive_json()
+            assert msg["type"] == "renamed"
+            assert msg["nickname"] == "guest_new"
 
 
 def test_default_nickname_when_empty():

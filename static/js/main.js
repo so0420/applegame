@@ -7,7 +7,6 @@ const GAME_DURATION_MS = 120 * 1000;
 
 const screens = {
   home: $("home"),
-  createScreen: $("createScreen"),
   joinScreen: $("joinScreen"),
   lobby: $("lobby"),
   game: $("game"),
@@ -88,24 +87,25 @@ document.querySelectorAll(".mode").forEach((btn) => {
       $("joinCode").focus();
       return;
     }
-    if (intent === "create") {
-      show("createScreen");
-      return;
-    }
     await startSession(intent);
   });
 });
 
-// Create screen (capacity picker)
-const capacityRange = $("capacityRange");
-const capacityValue = $("capacityValue");
-capacityRange.addEventListener("input", () => {
-  capacityValue.textContent = capacityRange.value;
-});
-$("createBackBtn").addEventListener("click", () => show("home"));
-$("createConfirmBtn").addEventListener("click", async () => {
-  const cap = Math.max(2, Math.min(50, parseInt(capacityRange.value, 10) || 10));
-  await startSession("create", null, cap);
+// ---- Lobby capacity input (host only, friend mode) ----
+const capacityInput = $("capacityInput");
+function commitCapacity() {
+  let v = parseInt(capacityInput.value, 10);
+  if (Number.isNaN(v)) v = state.room?.capacity ?? 10;
+  v = Math.max(2, Math.min(50, v));
+  capacityInput.value = String(v);
+  state.ws?.send("set_capacity", { capacity: v });
+}
+capacityInput.addEventListener("change", commitCapacity);
+capacityInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    capacityInput.blur();
+  }
 });
 
 // Join screen
@@ -127,14 +127,12 @@ async function submitJoinCode() {
   await startSession("join", code);
 }
 
-async function startSession(intent, code = null, capacity = null) {
+async function startSession(intent, code = null) {
   state.intent = intent;
   state.ws = new GameSocket();
   bindSocket(state.ws);
   await state.ws.connect();
-  const hello = { intent, code };
-  if (capacity != null) hello.capacity = capacity;
-  state.ws.send("hello", hello);
+  state.ws.send("hello", { intent, code });
 
   $("lobbyTitle").textContent =
     intent === "match" ? "랜덤 매칭 중" :
@@ -296,6 +294,15 @@ function bindSocket(ws) {
     renderLobby();
   });
 
+  ws.addEventListener("msg:capacity_changed", (e) => {
+    const cap = e.detail.capacity;
+    if (state.room) state.room.capacity = cap;
+    if (document.activeElement !== capacityInput) {
+      capacityInput.value = String(cap);
+    }
+    renderLobby();
+  });
+
   ws.addEventListener("msg:queued", (e) => {
     $("lobbyMsg").textContent = `매칭 대기열 ${e.detail.position}번째…`;
   });
@@ -400,6 +407,20 @@ function renderLobby() {
   const isHost = state.playerId === state.hostId;
   const canStart = state.mode === "friend" && isHost && cnt >= 2;
   $("startBtn").hidden = !canStart;
+
+  // Capacity section: visible only in friend mode
+  const showCap = state.mode === "friend";
+  $("capacitySection").hidden = !showCap;
+  if (showCap) {
+    capacityInput.disabled = !isHost;
+    capacityInput.min = String(Math.max(2, cnt));
+    if (document.activeElement !== capacityInput) {
+      capacityInput.value = String(cap);
+    }
+    $("capacityHelper").textContent = isHost
+      ? `2~50명 사이로 직접 입력 (현재 인원 ${cnt}명 미만으로는 줄일 수 없음)`
+      : `호스트가 설정합니다 (현재 ${cap}명)`;
+  }
   if (state.mode === "friend") {
     if (cnt < 2) {
       $("lobbyMsg").textContent = "친구에게 코드 또는 초대 링크를 공유하세요.";
