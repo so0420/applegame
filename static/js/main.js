@@ -10,7 +10,6 @@ const screens = {
   joinScreen: $("joinScreen"),
   lobby: $("lobby"),
   game: $("game"),
-  result: $("result"),
 };
 
 function show(name) {
@@ -45,6 +44,8 @@ const state = {
   replayRafId: null,
   replayLastTick: 0,
   replayCumScores: {},
+  focusedPlayerId: null,
+  gameWinnerId: null,
 };
 
 const sumBadge = $("sumBadge");
@@ -54,6 +55,7 @@ state.bigRenderer = new BoardRenderer(canvas);
 attachDragInput(canvas, state.bigRenderer, {
   onUpdate: (rect) => {
     if (state.replayActive) return;
+    if (state.focusedPlayerId !== state.playerId) return; // viewing only
     state.ws?.send("drag_update", rect);
     const sum = state.bigRenderer.sumIn(rect);
     sumBadge.hidden = false;
@@ -64,10 +66,13 @@ attachDragInput(canvas, state.bigRenderer, {
       sumBadge.style.left = center.x + "px";
       sumBadge.style.top = center.y + "px";
     }
+    // Mirror onto my own mini so the leaderboard shows my live drag
+    state.miniRenderers.get(state.playerId)?.setMyDrag(rect);
   },
   onSubmit: (rect) => {
     sumBadge.hidden = true;
     if (state.replayActive) return;
+    if (state.focusedPlayerId !== state.playerId) return;
     state.ws?.send("submit", rect);
   },
 });
@@ -203,16 +208,16 @@ $("cancelBtn").addEventListener("click", () => leaveAndGoHome());
 $("homeBtn").addEventListener("click", () => leaveAndGoHome());
 $("startBtn").addEventListener("click", () => state.ws?.send("start"));
 $("rematchBtn").addEventListener("click", () => {
-  exitReplay(false);
+  exitReplay();
   state.ws?.send("rematch");
 });
-$("replayBtn").addEventListener("click", () => startReplay());
 
-// ESC exits replay early
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.replayActive) {
-    exitReplay(true);
-  }
+// Drawer toggle (mobile)
+$("drawerToggle").addEventListener("click", () => {
+  screens.game.classList.toggle("drawer-open");
+});
+$("drawerBackdrop").addEventListener("click", () => {
+  screens.game.classList.remove("drawer-open");
 });
 
 const nickInput = $("nickInput");
@@ -271,7 +276,8 @@ async function copyText(text, successMsg) {
 }
 
 function leaveAndGoHome() {
-  exitReplay(false);
+  exitReplay();
+  $("resultBanner").hidden = true;
   state.ws?.send("leave");
   state.ws?.close();
   clearSession();
@@ -294,11 +300,17 @@ function resetState() {
   state.events = [];
   state.scores = {};
   state.initialBoard = null;
+  state.focusedPlayerId = null;
+  state.gameWinnerId = null;
   state.miniRenderers.clear();
   state.lbItems.clear();
   $("lbList").innerHTML = "";
   $("nickInput").value = "";
   $("progressFill").style.width = "0%";
+  $("resultBanner").hidden = true;
+  $("topProgress").hidden = false;
+  $("focusLabel").hidden = true;
+  screens.game.classList.remove("drawer-open");
 }
 
 // ---- Socket bindings ----
@@ -400,20 +412,24 @@ function bindSocket(ws) {
   ws.addEventListener("msg:peer_drag", (e) => {
     const { player_id, r1, c1, r2, c2 } = e.detail;
     if (player_id === state.playerId) return;
-    const renderer = state.miniRenderers.get(player_id);
-    renderer?.setMyDrag({ r1, c1, r2, c2 });
+    const rect = { r1, c1, r2, c2 };
+    state.miniRenderers.get(player_id)?.setMyDrag(rect);
+    if (player_id === state.focusedPlayerId) {
+      state.bigRenderer.setMyDrag(rect);
+    }
   });
 
   ws.addEventListener("msg:clear", (e) => {
     const { cells, scores, player_id, t_ms } = e.detail;
     state.events.push({ t_ms: t_ms ?? 0, player_id, cells });
-    if (player_id === state.playerId) {
-      state.bigRenderer.clearCells(cells);
-    }
     const mini = state.miniRenderers.get(player_id);
     if (mini) {
       mini.clearCells(cells);
       mini.setMyDrag(null);
+    }
+    if (player_id === state.focusedPlayerId) {
+      state.bigRenderer.clearCells(cells);
+      state.bigRenderer.setMyDrag(null);
     }
     state.scores = scores;
     reorderAndRankLeaderboard();
@@ -495,14 +511,23 @@ function onGameStart(m) {
   state.initialBoard = m.board.map((row) => row.slice());
   state.scores = {};
   for (const p of state.room?.players ?? []) state.scores[p.id] = 0;
+  state.gameWinnerId = null;
+  // Hide result banner if it was visible from a prior round
+  $("resultBanner").hidden = true;
+  // Replay controls only shown after game ends, not during live play
+  $("replayControls").hidden = true;
+  $("topProgress").hidden = false;
 
   state.bigRenderer.setBoard(m.board);
   state.bigRenderer.setMyDrag(null);
 
   buildLeaderboard();
+  // Default focus = me
+  setFocusedPlayer(state.playerId, /*forceCopy*/ false);
   reorderAndRankLeaderboard();
 
   show("game");
+  screens.game.classList.remove("drawer-open");
   startTimer();
   startProgress();
   requestAnimationFrame(() => {
@@ -596,6 +621,8 @@ function buildLeaderboard() {
     li.append(row, c);
     ul.appendChild(li);
 
+    li.addEventListener("click", () => setFocusedPlayer(p.id));
+
     const renderer = new BoardRenderer(c, { mini: true });
     if (state.initialBoard) renderer.setBoard(state.initialBoard);
     state.miniRenderers.set(p.id, renderer);
@@ -603,6 +630,36 @@ function buildLeaderboard() {
   }
   $("lbCount").textContent = String(players.length);
   $("totalPlayers").textContent = String(players.length);
+}
+
+function setFocusedPlayer(pid, forceCopy = true) {
+  if (!pid || !state.miniRenderers.has(pid)) return;
+  const changed = state.focusedPlayerId !== pid;
+  state.focusedPlayerId = pid;
+  for (const [id, item] of state.lbItems.entries()) {
+    item.li.classList.toggle("focused", id === pid);
+  }
+  // Mirror that player's mini board state onto the big renderer
+  if (changed || forceCopy) {
+    const mini = state.miniRenderers.get(pid);
+    if (mini && mini.board) {
+      state.bigRenderer.setBoard(mini.board);
+      state.bigRenderer.setMyDrag(null);
+    }
+  }
+  // Label only when looking at someone else
+  const label = $("focusLabel");
+  if (pid === state.playerId) {
+    label.hidden = true;
+    label.classList.remove("viewing");
+  } else {
+    const player = state.room?.players.find((p) => p.id === pid);
+    label.textContent = `${player?.nickname ?? "?"}의 보드`;
+    label.hidden = false;
+    label.classList.add("viewing");
+  }
+  // Close mobile drawer after picking
+  screens.game.classList.remove("drawer-open");
 }
 
 function reorderAndRankLeaderboard(scoresOverride = null) {
@@ -671,7 +728,7 @@ function startProgress() {
   state.progressInterval = setInterval(tick, 100);
 }
 
-// ---- Result ----
+// ---- Result mode (banner overlay + auto replay) ----
 function showResult(detail) {
   if (state.timerInterval) clearInterval(state.timerInterval);
   if (state.progressInterval) clearInterval(state.progressInterval);
@@ -679,31 +736,30 @@ function showResult(detail) {
   state.progressInterval = null;
 
   const { scores, winner_id } = detail;
-  const list = $("finalScores");
-  list.innerHTML = "";
-  const players = state.room?.players ?? [];
-  const ordered = players.slice().sort((a, b) => (scores[b.id] || 0) - (scores[a.id] || 0));
-  for (const p of ordered) {
-    const li = document.createElement("li");
-    if (p.id === winner_id) li.classList.add("winner");
-    const meLabel = p.id === state.playerId ? " (나)" : "";
-    const score = scores[p.id] ?? 0;
-    li.innerHTML = `<span>${escapeHtml(p.nickname)}${meLabel}</span><strong>${score}</strong>`;
-    list.appendChild(li);
-  }
+  state.scores = scores || {};
+  state.gameWinnerId = winner_id ?? null;
+  reorderAndRankLeaderboard();
+
   let title = "결과";
+  let subtitle = "";
   if (state.mode === "solo") {
-    title = `점수: ${scores[state.playerId] ?? 0} / 170`;
+    title = `점수 ${scores[state.playerId] ?? 0} / 170`;
+    subtitle = "리플레이가 자동 재생됩니다";
   } else if (winner_id === null || winner_id === undefined) {
     title = "무승부 🤝";
+    subtitle = "리플레이를 둘러보세요";
   } else if (winner_id === state.playerId) {
     title = "승리! 🎉";
+    subtitle = "리플레이를 둘러보세요";
   } else {
     title = "패배 😢";
+    subtitle = "리플레이를 둘러보세요";
   }
   $("resultTitle").textContent = title;
+  $("resultSubtitle").textContent = subtitle;
 
-  // New game button: solo always; friend host with >= 2 players; random with full
+  // Show result banner + new game/home buttons
+  const players = state.room?.players ?? [];
   const enough = players.length >= 2;
   const canRematch =
     state.mode === "solo"
@@ -712,8 +768,13 @@ function showResult(detail) {
         ? (state.playerId === state.hostId && enough)
         : enough;
   $("rematchBtn").hidden = !canRematch;
-  $("replayBtn").hidden = state.events.length === 0;
-  show("result");
+  $("resultBanner").hidden = false;
+
+  // Stay on game screen and auto-start replay if there's anything to play
+  show("game");
+  if (state.events.length > 0 && state.initialBoard) {
+    startReplay();
+  }
 }
 
 // ---- Replay (video-player style with seekable scrubber and speed control) ----
@@ -745,8 +806,8 @@ function startReplay() {
   state.scores = { ...state.replayCumScores };
   reorderAndRankLeaderboard();
 
-  // Show controls and switch to game screen; hide the top progress bar
-  // so it doesn't duplicate the scrubber.
+  // Show controls; hide the top progress bar so it doesn't duplicate
+  // the scrubber. We're already on the game screen.
   $("replayControls").hidden = false;
   $("topProgress").hidden = true;
   show("game");
@@ -764,14 +825,13 @@ function startReplay() {
   state.replayRafId = requestAnimationFrame(replayTick);
 }
 
-function exitReplay(returnToResult) {
+function exitReplay() {
   if (!state.replayActive) return;
   state.replayActive = false;
   if (state.replayRafId) cancelAnimationFrame(state.replayRafId);
   state.replayRafId = null;
   $("replayControls").hidden = true;
   $("topProgress").hidden = false;
-  if (returnToResult) show("result");
 }
 
 function replayTick(now) {
@@ -803,13 +863,13 @@ function applyReplayEventsBetween(fromMs, toMs, animate) {
   for (const ev of state.events) {
     if (ev.t_ms > fromMs && ev.t_ms <= toMs) {
       const mini = state.miniRenderers.get(ev.player_id);
-      const isMe = ev.player_id === state.playerId;
+      const isFocused = ev.player_id === state.focusedPlayerId;
       if (animate) {
         mini?.clearCells(ev.cells);
-        if (isMe) state.bigRenderer.clearCells(ev.cells);
+        if (isFocused) state.bigRenderer.clearCells(ev.cells);
       } else {
         mini?.applyClear(ev.cells);
-        if (isMe) state.bigRenderer.applyClear(ev.cells);
+        if (isFocused) state.bigRenderer.applyClear(ev.cells);
       }
       state.replayCumScores[ev.player_id] =
         (state.replayCumScores[ev.player_id] || 0) + ev.cells.length;
@@ -891,8 +951,9 @@ $("replayPlayPause").addEventListener("click", () => {
   updateReplayPlayPause();
 });
 
-// Close
-$("replayClose").addEventListener("click", () => exitReplay(true));
+// Close (just stops the replay; user stays on result mode and can scrub
+// or hit 새 게임 / 홈으로 in the result banner)
+$("replayClose").addEventListener("click", () => exitReplay());
 
 // Scrubber drag/click
 (function bindScrubber() {

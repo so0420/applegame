@@ -84,7 +84,18 @@
 
     <!-- Game -->
     <section class="screen game-screen" id="game" hidden>
+      <div id="resultBanner" class="result-banner" hidden>
+        <div class="result-text">
+          <strong id="resultTitle">결과</strong>
+          <span class="muted" id="resultSubtitle"></span>
+        </div>
+        <div class="result-actions-inline">
+          <button id="rematchBtn">새 게임</button>
+          <button id="homeBtn" class="ghost">홈으로</button>
+        </div>
+      </div>
       <header class="game-bar">
+        <button id="drawerToggle" class="drawer-toggle" aria-label="순위 열기">☰</button>
         <div class="game-stat">
           <span class="muted">점수</span>
           <strong id="myScoreNum">0</strong>
@@ -123,28 +134,17 @@
         </div>
       </div>
       <div class="game-layout">
-        <aside class="leaderboard">
+        <aside class="leaderboard" id="leaderboard">
           <h3>LEADERBOARD <span class="muted">(<span id="lbCount">0</span>)</span></h3>
           <ul id="lbList"></ul>
         </aside>
         <main class="board-area">
+          <div id="focusLabel" class="focus-label" hidden></div>
           <canvas id="board"></canvas>
           <div id="sumBadge" class="sum-badge" hidden>0</div>
         </main>
       </div>
-    </section>
-
-    <!-- Result -->
-    <section class="screen" id="result" hidden>
-      <h2 id="resultTitle">결과</h2>
-      <div class="section">
-        <ul id="finalScores"></ul>
-        <div class="result-actions">
-          <button id="replayBtn" class="ghost">리플레이 보기</button>
-          <button id="rematchBtn">새 게임</button>
-          <button id="homeBtn" class="ghost">홈으로</button>
-        </div>
-      </div>
+      <div id="drawerBackdrop" class="drawer-backdrop"></div>
     </section>
 
   </main>
