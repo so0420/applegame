@@ -4,9 +4,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .matchmaking import Matchmaker
 from .ws.handlers import session
@@ -23,6 +24,22 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    """Disable browser caching for HTML/CSS/JS during development."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+
+app.add_middleware(NoCacheMiddleware)
 
 manager = RoomManager()
 matchmaker = Matchmaker(manager)

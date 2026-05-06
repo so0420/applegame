@@ -20,6 +20,7 @@ const OPP_STROKE = "#c62828";
 
 export class BoardRenderer {
   constructor(canvas, options = {}) {
+    if (!canvas) throw new Error("BoardRenderer: canvas element is null");
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.mini = !!options.mini;
