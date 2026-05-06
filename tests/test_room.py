@@ -26,10 +26,10 @@ def test_winner_none_on_total_tie():
     assert r.determine_winner() is None
 
 
-def test_capacity():
-    assert Room(id="X", mode="solo").capacity == 1
-    assert Room(id="X", mode="friend").capacity == 2
-    assert Room(id="X", mode="random").capacity == 2
+def test_capacity_is_stored_field():
+    assert Room(id="X", mode="solo", capacity=1).capacity == 1
+    assert Room(id="X", mode="friend", capacity=10).capacity == 10
+    assert Room(id="X", mode="friend", capacity=50).capacity == 50
 
 
 def test_start_creates_independent_boards_per_player():

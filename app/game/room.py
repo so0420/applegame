@@ -36,10 +36,16 @@ RoomMode = Literal["solo", "friend", "random"]
 RoomState = Literal["waiting", "playing", "finished"]
 
 
+CAPACITY_MIN = 2
+CAPACITY_MAX = 50
+CAPACITY_DEFAULT = 10
+
+
 @dataclass
 class Room:
     id: str
     mode: RoomMode
+    capacity: int = 2
     host_id: str | None = None
     players: dict[str, Player] = field(default_factory=dict)
     boards: dict[str, list[list[int]]] = field(default_factory=dict)
@@ -50,10 +56,6 @@ class Room:
     winner_id: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     timer_task: asyncio.Task | None = None
-
-    @property
-    def capacity(self) -> int:
-        return 1 if self.mode == "solo" else 2
 
     @property
     def is_full(self) -> bool:

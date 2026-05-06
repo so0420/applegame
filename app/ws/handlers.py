@@ -10,13 +10,29 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from .. import schemas as S
 from ..game.board import validate_and_clear
-from ..game.room import GAME_DURATION, Player, Room
+from ..game.room import (
+    CAPACITY_DEFAULT,
+    CAPACITY_MAX,
+    CAPACITY_MIN,
+    GAME_DURATION,
+    Player,
+    Room,
+)
 from ..matchmaking import Matchmaker
 from .manager import RoomManager, broadcast, make_player, send
 
 log = logging.getLogger(__name__)
 
 DISCONNECT_GRACE = 30.0  # seconds
+
+
+def _parse_capacity(raw: object) -> int:
+    """Coerce a capacity hint from the client into [CAPACITY_MIN, CAPACITY_MAX]."""
+    try:
+        n = int(raw) if raw is not None else CAPACITY_DEFAULT
+    except (TypeError, ValueError):
+        n = CAPACITY_DEFAULT
+    return max(CAPACITY_MIN, min(CAPACITY_MAX, n))
 
 
 async def session(
@@ -47,7 +63,8 @@ async def session(
         if intent == "solo":
             room = await manager.create_room("solo", player)
         elif intent == "create":
-            room = await manager.create_room("friend", player)
+            cap = _parse_capacity(hello.get("capacity"))
+            room = await manager.create_room("friend", player, capacity=cap)
         elif intent == "join":
             room = manager.get(code)
             if room is None:
@@ -119,8 +136,8 @@ async def _message_loop(
             if room.mode == "friend" and player.id != room.host_id:
                 await send(player, S.msg(S.ERROR, code="not_host", message="host only"))
                 continue
-            if room.mode == "friend" and not room.is_full:
-                await send(player, S.msg(S.ERROR, code="not_ready", message="waiting for opponent"))
+            if room.mode == "friend" and len(room.players) < 2:
+                await send(player, S.msg(S.ERROR, code="not_ready", message="need at least 2 players"))
                 continue
             await _start_game(room)
 

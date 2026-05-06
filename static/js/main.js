@@ -7,6 +7,7 @@ const GAME_DURATION_MS = 120 * 1000;
 
 const screens = {
   home: $("home"),
+  createScreen: $("createScreen"),
   joinScreen: $("joinScreen"),
   lobby: $("lobby"),
   game: $("game"),
@@ -87,12 +88,28 @@ document.querySelectorAll(".mode").forEach((btn) => {
       $("joinCode").focus();
       return;
     }
+    if (intent === "create") {
+      show("createScreen");
+      return;
+    }
     await startSession(intent);
   });
 });
 
-$("joinBackBtn").addEventListener("click", () => show("home"));
+// Create screen (capacity picker)
+const capacityRange = $("capacityRange");
+const capacityValue = $("capacityValue");
+capacityRange.addEventListener("input", () => {
+  capacityValue.textContent = capacityRange.value;
+});
+$("createBackBtn").addEventListener("click", () => show("home"));
+$("createConfirmBtn").addEventListener("click", async () => {
+  const cap = Math.max(2, Math.min(50, parseInt(capacityRange.value, 10) || 10));
+  await startSession("create", null, cap);
+});
 
+// Join screen
+$("joinBackBtn").addEventListener("click", () => show("home"));
 $("joinSubmit").addEventListener("click", () => submitJoinCode());
 $("joinCode").addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
@@ -110,12 +127,14 @@ async function submitJoinCode() {
   await startSession("join", code);
 }
 
-async function startSession(intent, code = null) {
+async function startSession(intent, code = null, capacity = null) {
   state.intent = intent;
   state.ws = new GameSocket();
   bindSocket(state.ws);
   await state.ws.connect();
-  state.ws.send("hello", { intent, code });
+  const hello = { intent, code };
+  if (capacity != null) hello.capacity = capacity;
+  state.ws.send("hello", hello);
 
   $("lobbyTitle").textContent =
     intent === "match" ? "랜덤 매칭 중" :
@@ -375,14 +394,22 @@ function renderLobby() {
     li.innerHTML = `<span>${escapeHtml(p.nickname)}${me}</span><span></span>`;
     list.appendChild(li);
   }
+  const cnt = state.room.players.length;
+  const cap = state.room.capacity ?? 2;
+  $("playerCount").textContent = `${cnt} / ${cap}`;
   const isHost = state.playerId === state.hostId;
-  const canStart = state.mode === "friend" && isHost && state.room.players.length === 2;
+  const canStart = state.mode === "friend" && isHost && cnt >= 2;
   $("startBtn").hidden = !canStart;
   if (state.mode === "friend") {
-    $("lobbyMsg").textContent =
-      state.room.players.length === 2
-        ? (isHost ? "준비되면 시작 버튼을 누르세요." : "방장이 시작하기를 기다리는 중…")
-        : "친구에게 코드 또는 초대 링크를 공유하세요.";
+    if (cnt < 2) {
+      $("lobbyMsg").textContent = "친구에게 코드 또는 초대 링크를 공유하세요.";
+    } else if (isHost) {
+      $("lobbyMsg").textContent = cnt < cap
+        ? "지금 시작하거나 더 기다릴 수 있어요."
+        : "방이 가득 찼습니다. 시작 버튼을 누르세요.";
+    } else {
+      $("lobbyMsg").textContent = "방장이 시작하기를 기다리는 중…";
+    }
   }
 }
 
@@ -525,14 +552,14 @@ function showResult(detail) {
   }
   $("resultTitle").textContent = title;
 
-  // New game button: solo always; friend host with both players; random with both
-  const both = players.length === 2;
+  // New game button: solo always; friend host with >= 2 players; random with full
+  const enough = players.length >= 2;
   const canRematch =
     state.mode === "solo"
       ? true
       : state.mode === "friend"
-        ? (state.playerId === state.hostId && both)
-        : both;
+        ? (state.playerId === state.hostId && enough)
+        : enough;
   $("rematchBtn").hidden = !canRematch;
   $("replayBtn").hidden = state.events.length === 0;
   show("result");

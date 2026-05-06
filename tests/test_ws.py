@@ -51,6 +51,39 @@ def test_friend_room_creation_and_join():
             assert host_start["board"] == guest_start["board"]
 
 
+def test_create_room_default_capacity_is_10():
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello", "intent": "create"})
+        joined = ws.receive_json()
+        assert joined["type"] == "joined"
+        assert joined["room"]["capacity"] == 10
+
+
+def test_create_room_custom_capacity():
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello", "intent": "create", "capacity": 25})
+        joined = ws.receive_json()
+        assert joined["room"]["capacity"] == 25
+
+
+def test_create_room_capacity_clamped():
+    client = TestClient(app)
+    # too small → clamped to 2
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello", "intent": "create", "capacity": 1})
+        assert ws.receive_json()["room"]["capacity"] == 2
+    # too large → clamped to 50
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello", "intent": "create", "capacity": 999})
+        assert ws.receive_json()["room"]["capacity"] == 50
+    # garbage → default
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "hello", "intent": "create", "capacity": "abc"})
+        assert ws.receive_json()["room"]["capacity"] == 10
+
+
 def test_default_nickname_when_empty():
     """Server assigns Player-XXXX when client sends empty nickname."""
     client = TestClient(app)

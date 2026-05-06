@@ -163,6 +163,53 @@ button.ghost:hover {
   font-weight: 700;
 }
 
+.capacity-control {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+.capacity-control input[type="range"] {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: var(--border);
+  border-radius: 999px;
+  outline: none;
+  margin: 0;
+}
+.capacity-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.capacity-control input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+.capacity-display {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 70px;
+  justify-content: flex-end;
+}
+.capacity-display span:first-child {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
 /* Lobby */
 .code-row {
   display: flex;

@@ -31,7 +31,9 @@ class RoomManager:
         self.rooms: dict[str, Room] = {}
         self._lock = asyncio.Lock()
 
-    async def create_room(self, mode: RoomMode, host: Player) -> Room:
+    async def create_room(
+        self, mode: RoomMode, host: Player, capacity: int | None = None
+    ) -> Room:
         async with self._lock:
             for _ in range(10):
                 rid = _gen_room_id()
@@ -39,9 +41,19 @@ class RoomManager:
                     break
             else:
                 raise RuntimeError("could not allocate room id")
-            room = Room(id=rid, mode=mode, host_id=host.id, players={host.id: host})
+            cap = capacity if capacity is not None else (1 if mode == "solo" else 2)
+            room = Room(
+                id=rid,
+                mode=mode,
+                capacity=cap,
+                host_id=host.id,
+                players={host.id: host},
+            )
             self.rooms[rid] = room
-            log.info("room created id=%s mode=%s host=%s", rid, mode, host.nickname)
+            log.info(
+                "room created id=%s mode=%s host=%s capacity=%d",
+                rid, mode, host.nickname, cap,
+            )
             return room
 
     def get(self, room_id: str) -> Room | None:
