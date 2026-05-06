@@ -386,12 +386,14 @@ button.ghost:hover {
   max-height: 75vh;
   touch-action: none;
   background: var(--panel);
-  border: 1px solid var(--border);
+  /* Outline via shadow instead of border so the box stays the exact size
+     we set in JS (avoids border-box vs drawing-buffer mismatch). */
+  box-shadow: 0 0 0 1px var(--border);
   border-radius: 8px;
 }
 
 .sum-badge {
-  position: absolute;
+  position: fixed;
   background: var(--text);
   color: white;
   font-weight: 700;
@@ -400,6 +402,7 @@ button.ghost:hover {
   border-radius: 999px;
   pointer-events: none;
   transform: translate(-50%, -130%);
+  z-index: 10;
 }
 .sum-badge.ten { background: var(--good); }
 

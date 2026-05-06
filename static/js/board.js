@@ -33,6 +33,13 @@ export class BoardRenderer {
     this._fadingCells = []; // [{r,c,start,duration}]
     this._raf = null;
     window.addEventListener("resize", () => this.resize());
+    // Catch parent layout changes too (media-query breakpoints,
+    // sidebar appearing, etc.) — without this, click coords go stale
+    // when the board is resized by something other than the window.
+    if (typeof ResizeObserver !== "undefined" && this.canvas.parentElement) {
+      this._ro = new ResizeObserver(() => this.resize());
+      this._ro.observe(this.canvas.parentElement);
+    }
   }
 
   setBoard(board) {
@@ -72,8 +79,12 @@ export class BoardRenderer {
 
   cellAt(clientX, clientY) {
     const rect = this.canvas.getBoundingClientRect();
-    const x = clientX - rect.left - this.padding;
-    const y = clientY - rect.top - this.padding;
+    // clientLeft/Top = border thickness; without these, clicks land off by
+    // the border width especially after layout changes.
+    const bl = this.canvas.clientLeft;
+    const bt = this.canvas.clientTop;
+    const x = clientX - rect.left - bl - this.padding;
+    const y = clientY - rect.top - bt - this.padding;
     const c = Math.floor(x / this.cellSize);
     const r = Math.floor(y / this.cellSize);
     if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return null;
@@ -85,7 +96,9 @@ export class BoardRenderer {
     const cx = this.padding + ((rect.c1 + rect.c2 + 1) / 2) * this.cellSize;
     const cy = this.padding + (rect.r1 * this.cellSize);
     const canvasRect = this.canvas.getBoundingClientRect();
-    return { x: canvasRect.left + cx, y: canvasRect.top + cy };
+    const bl = this.canvas.clientLeft;
+    const bt = this.canvas.clientTop;
+    return { x: canvasRect.left + bl + cx, y: canvasRect.top + bt + cy };
   }
 
   sumIn(rect) {
