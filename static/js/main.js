@@ -16,6 +16,8 @@ function show(name) {
   for (const key of Object.keys(screens)) {
     screens[key].hidden = key !== name;
   }
+  // Tells the rotate-prompt media query whether we're on the game screen
+  document.body.classList.toggle("on-game", name === "game");
 }
 function allScreensHidden() {
   return Object.values(screens).every((el) => el.hidden);
@@ -153,6 +155,14 @@ document.querySelectorAll(".mode").forEach((btn) => {
       return;
     }
     await startSession(intent);
+  });
+});
+
+// Resize all renderers when device orientation changes (rotate-hint → game)
+window.matchMedia("(orientation: portrait)").addEventListener("change", () => {
+  requestAnimationFrame(() => {
+    state.bigRenderer?.resize();
+    for (const r of state.miniRenderers.values()) r.resize();
   });
 });
 
