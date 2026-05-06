@@ -105,8 +105,24 @@ function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch {}
 }
 
+// Overlay only appears if the reconnect actually takes a moment — fast
+// responses (stale session → NOT_FOUND, healthy reconnect) skip it
+// entirely and go straight to home / game.
+let _overlayTimer = null;
 function showReconnectOverlay(on) {
-  $("reconnectOverlay").hidden = !on;
+  if (on) {
+    if (_overlayTimer || !$("reconnectOverlay").hidden) return;
+    _overlayTimer = setTimeout(() => {
+      _overlayTimer = null;
+      $("reconnectOverlay").hidden = false;
+    }, 250);
+  } else {
+    if (_overlayTimer) {
+      clearTimeout(_overlayTimer);
+      _overlayTimer = null;
+    }
+    $("reconnectOverlay").hidden = true;
+  }
 }
 
 // ---- Auto-actions on page load ----
