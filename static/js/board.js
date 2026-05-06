@@ -143,9 +143,16 @@ export class BoardRenderer {
     const bl = this.canvas.clientLeft;
     const bt = this.canvas.clientTop;
     if (this.rotated) {
-      // Forward transform: canvas (cx, cy) → visual (cssH - cy, cx)
+      // After 90° CW rotation, "above the rect" in the user's view is +x in
+      // viewport. Push the anchor a bit further past the rect's user-top
+      // edge so the (centered) badge floats clearly above instead of
+      // overlapping the cells.
       const cssH = this.cellSize * ROWS + this.padding * 2;
-      return { x: canvasRect.left + (cssH - cy), y: canvasRect.top + cx };
+      const offset = Math.max(20, this.cellSize * 0.7);
+      return {
+        x: canvasRect.left + (cssH - cy) + offset,
+        y: canvasRect.top + cx,
+      };
     }
     return { x: canvasRect.left + bl + cx, y: canvasRect.top + bt + cy };
   }

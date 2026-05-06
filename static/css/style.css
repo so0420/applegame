@@ -113,10 +113,15 @@ html, body {
     background: #d8edcd;
   }
   body.on-game .game-screen {
+    /* Use dynamic viewport units so Mobile Chrome's address bar
+       collapsing/expanding doesn't leave the rotated screen too wide. */
     width: 100vh;
+    width: 100dvh;
     height: 100vw;
+    height: 100dvw;
     transform-origin: 0 0;
     transform: translate(100vw, 0) rotate(90deg);
+    transform: translate(100dvw, 0) rotate(90deg);
     position: fixed;
     top: 0;
     left: 0;
@@ -149,9 +154,19 @@ html, body {
   body.on-game .mobile-game-ui {
     display: block;
     width: 100vh;
+    width: 100dvh;
     height: 100vw;
+    height: 100dvw;
     transform-origin: 0 0;
     transform: translate(100vw, 0) rotate(90deg);
+    transform: translate(100dvw, 0) rotate(90deg);
+  }
+
+  /* Sum badge anchor (rectCenter) is offset to the user's "above" the
+     rect; centre + rotate the badge on it. */
+  body.on-game .sum-badge {
+    transform: translate(-50%, -50%) rotate(90deg);
+    transform-origin: center;
   }
 
   /* Compact result banner */
