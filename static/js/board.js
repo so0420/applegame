@@ -82,17 +82,19 @@ export class BoardRenderer {
     const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
     this.rotated = this.shouldRotate();
 
-    // The whole game-screen rotates via CSS, so the canvas itself stays
-    // unrotated. We just need to pick cellSize that fits the parent's
-    // (already-rotated) layout box.
     const availW = Math.max(120, wrap.clientWidth - padX);
     const cellByW = Math.floor((availW - this.padding * 2) / COLS);
     let cellByH = Infinity;
     if (!this.mini) {
-      const ph = wrap.clientHeight - padY;
-      const usable = ph > 50
-        ? Math.max(120, ph)
-        : Math.max(150, window.innerHeight * 0.72);
+      // Rotated mode: parent has explicit flex sizing — its clientHeight is
+      // the actual visual envelope. Otherwise use viewport-based cap so we
+      // don't get into a parent-shrinks-because-canvas-shrinks loop.
+      let usable;
+      if (this.rotated) {
+        usable = Math.max(120, wrap.clientHeight - padY);
+      } else {
+        usable = Math.max(150, window.innerHeight * 0.72);
+      }
       cellByH = Math.floor((usable - this.padding * 2) / ROWS);
     }
     let cell = Math.min(cellByW, cellByH);

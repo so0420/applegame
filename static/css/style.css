@@ -26,8 +26,8 @@ html, body {
 }
 
 /* Portrait-mobile: rotate the entire game screen 90° so header and
-   board are both in landscape, with safe-area padding so nothing hits
-   the device edges. */
+   board are both in landscape. The header is minimised to score +
+   timer to leave the most room for the board. */
 @media (orientation: portrait) and (max-width: 700px) {
   body.on-game { overflow: hidden; }
   body.on-game #app {
@@ -48,18 +48,56 @@ html, body {
     margin: 0;
     border: none;
     border-radius: 0;
-    /* Inner padding so cells / banners don't crowd the rotated edges */
-    padding: 6px 8px env(safe-area-inset-bottom, 6px) 8px;
+    padding: 4px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
   }
+
+  /* Compact header — score + timer only */
+  body.on-game .game-bar {
+    padding: 2px 8px;
+    gap: 6px;
+    border-bottom: none;
+  }
+  body.on-game .game-stat { font-size: 12px; gap: 3px; }
+  body.on-game .game-stat strong { font-size: 14px; }
+  body.on-game .game-stat .muted { display: none; }
+  body.on-game .game-stat.center { display: none; } /* hide rank */
+  body.on-game .drawer-toggle {
+    padding: 2px 8px;
+    font-size: 14px;
+  }
+  body.on-game .progress { display: none; }
+
+  /* Compact result banner */
+  body.on-game .result-banner {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+  body.on-game .result-banner .result-text strong { font-size: 14px; }
+  body.on-game .result-banner .result-text .muted { display: none; }
+  body.on-game .result-banner button { padding: 4px 10px; font-size: 12px; }
+
+  /* Compact replay controls */
+  body.on-game .replay-controls { padding: 4px 8px; }
+  body.on-game .replay-scrub { margin-bottom: 4px; height: 6px; }
+  body.on-game .replay-scrub-thumb { width: 14px; height: 14px; }
+  body.on-game .replay-bar { gap: 6px; }
+  body.on-game .replay-icon-btn { width: 28px; padding: 4px 0; font-size: 11px; }
+  body.on-game .replay-time { min-width: 64px; font-size: 11px; }
+  body.on-game .speed-btn { padding: 3px 6px; font-size: 11px; min-width: 32px; }
+
+  /* Board fills the remaining space */
+  body.on-game .game-layout {
+    flex: 1;
+    min-height: 0;
+  }
   body.on-game .board-area {
     flex: 1;
     min-height: 0;
-    padding: 6px;
+    padding: 2px;
   }
-  body.on-game .game-bar { padding: 8px 12px; }
 }
 
 body {
