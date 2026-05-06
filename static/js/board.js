@@ -64,8 +64,20 @@ export class BoardRenderer {
   resize() {
     const wrap = this.canvas.parentElement;
     if (!wrap) return;
-    const w = Math.max(200, wrap.clientWidth - 16);
-    const cell = Math.floor((w - this.padding * 2) / COLS);
+    // Available width = parent's content box (subtract its actual horizontal padding)
+    const cs = window.getComputedStyle(wrap);
+    const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    const availW = Math.max(120, wrap.clientWidth - padX);
+    const cellByW = Math.floor((availW - this.padding * 2) / COLS);
+    let cell = cellByW;
+    // For the main (non-mini) board, also cap by viewport height so the
+    // canvas isn't vertically squashed when the window is short.
+    if (!this.mini) {
+      const maxH = Math.max(150, window.innerHeight * 0.72);
+      const cellByH = Math.floor((maxH - this.padding * 2) / ROWS);
+      cell = Math.min(cellByW, cellByH);
+    }
+    cell = Math.max(8, cell);
     this.cellSize = cell;
     const cssW = cell * COLS + this.padding * 2;
     const cssH = cell * ROWS + this.padding * 2;

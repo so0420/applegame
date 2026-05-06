@@ -381,9 +381,8 @@ button.ghost:hover {
 }
 #board {
   display: block;
-  width: 100%;
-  height: auto;
-  max-height: 75vh;
+  /* Width/height are set in JS based on the smaller of width-fit and
+     height-fit; do not constrain via CSS or the canvas gets squashed. */
   touch-action: none;
   background: var(--panel);
   /* Outline via shadow instead of border so the box stays the exact size
