@@ -143,7 +143,16 @@ html, body {
     border-radius: 0;
   }
   body.on-game .board-area { background: transparent; padding: 44px 14px 56px 14px; }
-  body.on-game .mobile-game-ui { display: block; }
+  /* Rotate the overlay UI together with the game-screen so the corner
+     buttons and bottom score strip read in the same orientation as the
+     board (user tilts head left). */
+  body.on-game .mobile-game-ui {
+    display: block;
+    width: 100vh;
+    height: 100vw;
+    transform-origin: 0 0;
+    transform: translate(100vw, 0) rotate(90deg);
+  }
 
   /* Compact result banner */
   body.on-game .result-banner {
