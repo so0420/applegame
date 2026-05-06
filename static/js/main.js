@@ -499,13 +499,15 @@ function onReconnected(m) {
   // Build leaderboard, then set each player's current board state
   buildLeaderboard();
   if (m.boards) {
-    const myBoard = m.boards[state.playerId];
-    if (myBoard) state.bigRenderer.setBoard(myBoard);
     for (const [pid, board] of Object.entries(m.boards)) {
       const mini = state.miniRenderers.get(pid);
       if (mini) mini.setBoard(board);
     }
   }
+  // Restore focus to me — also copies my current board onto the big
+  // renderer and (critically) re-enables drag input which is gated by
+  // focusedPlayerId === playerId.
+  setFocusedPlayer(state.playerId, /*forceCopy*/ true);
   // Mark currently disconnected peers
   for (const p of m.room.players) {
     if (p.connected === false) {
