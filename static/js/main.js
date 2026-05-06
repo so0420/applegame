@@ -623,8 +623,10 @@ function startReplay() {
   state.scores = { ...state.replayCumScores };
   reorderAndRankLeaderboard();
 
-  // Show controls and switch to game screen
+  // Show controls and switch to game screen; hide the top progress bar
+  // so it doesn't duplicate the scrubber.
   $("replayControls").hidden = false;
+  $("topProgress").hidden = true;
   show("game");
   requestAnimationFrame(() => {
     state.bigRenderer.resize();
@@ -646,6 +648,7 @@ function exitReplay(returnToResult) {
   if (state.replayRafId) cancelAnimationFrame(state.replayRafId);
   state.replayRafId = null;
   $("replayControls").hidden = true;
+  $("topProgress").hidden = false;
   if (returnToResult) show("result");
 }
 
