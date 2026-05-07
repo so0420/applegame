@@ -330,7 +330,7 @@ function resetState() {
   $("lbList").innerHTML = "";
   $("nickInput").value = "";
   $("progressFill").style.width = "0%";
-  $("verticalProgressFill").style.height = "0%";
+  $("verticalProgressFill").style.width = "0%";
   $("resultBanner").hidden = true;
   $("topProgress").hidden = false;
   $("focusLabel").hidden = true;
@@ -780,7 +780,7 @@ function startProgress() {
     const elapsed = Date.now() - startTs;
     const pct = Math.min(100, (elapsed / GAME_DURATION_MS) * 100);
     fill.style.width = pct + "%";
-    vfill.style.height = pct + "%";
+    vfill.style.width = pct + "%";
     const remaining = GAME_DURATION_MS - elapsed;
     const warn = remaining <= 30000 && remaining > 10000;
     const danger = remaining <= 10000;
@@ -970,7 +970,7 @@ function updateReplayProgress() {
   $("replayScrubFill").style.width = pct + "%";
   $("replayScrubThumb").style.left = pct + "%";
   $("progressFill").style.width = pct + "%";
-  $("verticalProgressFill").style.height = pct + "%";
+  $("verticalProgressFill").style.width = pct + "%";
   $("replayCurrent").textContent = formatMmSs(state.replayTime);
   // Top-bar timer counts down so it matches the live game look
   const remaining = Math.max(0, GAME_DURATION_MS - state.replayTime);
