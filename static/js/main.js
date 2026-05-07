@@ -331,6 +331,8 @@ function resetState() {
   $("nickInput").value = "";
   $("progressFill").style.width = "0%";
   $("verticalProgressFill").style.width = "0%";
+  $("miniScore").textContent = "0";
+  $("miniTimer").textContent = "2:00";
   $("resultBanner").hidden = true;
   $("topProgress").hidden = false;
   $("focusLabel").hidden = true;
@@ -742,6 +744,7 @@ function reorderAndRankLeaderboard(scoresOverride = null) {
     if (p.id === state.playerId) {
       $("myRank").textContent = `#${idx + 1}`;
       $("myScoreNum").textContent = String(scores[p.id] || 0);
+      $("miniScore").textContent = String(scores[p.id] || 0);
       state.myScore = scores[p.id] || 0;
     }
   });
@@ -760,6 +763,7 @@ function startTimer() {
     el.textContent = text;
     el.classList.toggle("warn", sec <= 30 && sec > 10);
     el.classList.toggle("danger", sec <= 10);
+    $("miniTimer").textContent = text;
     if (remaining <= 0 && state.timerInterval) {
       clearInterval(state.timerInterval);
       state.timerInterval = null;
@@ -977,6 +981,7 @@ function updateReplayProgress() {
   const text = formatMmSs(remaining);
   const timerEl = $("timer");
   timerEl.textContent = text;
+  $("miniTimer").textContent = text;
   const remSec = Math.ceil(remaining / 1000);
   const warn = remSec <= 30 && remSec > 10;
   const danger = remSec <= 10;
