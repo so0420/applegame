@@ -202,7 +202,6 @@ html, body {
   body.on-game .board-area {
     flex: 1;
     min-height: 0;
-    padding: 2px;
   }
 }
 
