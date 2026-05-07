@@ -71,7 +71,7 @@ export class BoardRenderer {
 
   shouldRotate() {
     if (this.mini) return false;
-    return window.matchMedia("(orientation: portrait) and (max-width: 700px)").matches;
+    return window.matchMedia("(orientation: portrait) and (max-width: 900px)").matches;
   }
 
   resize() {

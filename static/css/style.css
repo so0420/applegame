@@ -84,7 +84,7 @@ html, body {
 /* Portrait-mobile: rotate the entire game screen 90° so header and
    board are both in landscape. The header is minimised to score +
    timer to leave the most room for the board. */
-@media (orientation: portrait) and (max-width: 700px) {
+@media (orientation: portrait) and (max-width: 900px) {
   body.on-game { overflow: hidden; }
   body.on-game #app {
     max-width: none;
@@ -123,9 +123,11 @@ html, body {
       linear-gradient(to bottom, rgba(0, 60, 0, 0.05) 1px, transparent 1px);
     background-size: 22px 22px;
   }
-  /* The default game-bar / progress are replaced by the overlay UI */
-  body.on-game .game-bar { display: none; }
-  body.on-game .progress { display: none; }
+  /* All header-like UI is hidden — only corner buttons + bottom timer */
+  body.on-game .game-bar,
+  body.on-game .progress,
+  body.on-game .result-banner,
+  body.on-game .replay-controls { display: none !important; }
   body.on-game #board {
     background: transparent !important;
     box-shadow: none !important;
