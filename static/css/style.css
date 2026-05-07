@@ -58,16 +58,21 @@ html, body {
 .corner-tr { right: 10px; }
 .mobile-stats {
   position: absolute;
-  top: 18px;
-  left: 60px;
-  right: 60px;
-  text-align: center;
-  font-size: 15px;
-  color: #2e6e3a;
-  font-weight: 700;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 16px;
+  color: #1a4a20;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.5px;
+  background: rgba(255, 255, 255, 0.75);
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
 }
 .mobile-stats .dot { opacity: 0.35; margin: 0 6px; }
 /* Timer bar, viewport-fixed at the bottom of the phone — horizontal in
