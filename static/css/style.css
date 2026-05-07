@@ -58,21 +58,22 @@ html, body {
 .corner-tr { right: 10px; }
 .mobile-stats {
   position: absolute;
-  top: 12px;
+  top: 6px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 16px;
+  font-size: 14px;
   color: #1a4a20;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
   letter-spacing: 0.5px;
-  background: rgba(255, 255, 255, 0.75);
-  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 4px 12px;
   border-radius: 999px;
   border: 1px solid rgba(0, 0, 0, 0.06);
   backdrop-filter: blur(4px);
   white-space: nowrap;
+  line-height: 1.2;
 }
 .mobile-stats .dot { opacity: 0.35; margin: 0 6px; }
 /* Timer bar, viewport-fixed at the bottom of the phone — horizontal in
@@ -152,7 +153,7 @@ html, body {
     box-shadow: none !important;
     border-radius: 0;
   }
-  body.on-game .board-area { background: transparent; padding: 44px 14px 18px 14px; }
+  body.on-game .board-area { background: transparent; padding: 56px 14px 22px 14px; }
   body.on-game .vertical-progress { display: block; }
   /* Rotate the overlay UI together with the game-screen so the corner
      buttons and bottom score strip read in the same orientation as the
