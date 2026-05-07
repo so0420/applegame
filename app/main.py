@@ -10,8 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .matchmaking import Matchmaker
-from .ws.handlers import session
-from .ws.manager import RoomManager
+from .ws.handlers import _start_game, session
+from .ws.manager import RoomManager, broadcast
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
@@ -42,7 +42,7 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 app.add_middleware(NoCacheMiddleware)
 
 manager = RoomManager()
-matchmaker = Matchmaker(manager)
+matchmaker = Matchmaker(manager, on_start=_start_game, broadcast=broadcast)
 
 
 @app.get("/")

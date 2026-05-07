@@ -6,39 +6,69 @@ from app.matchmaking import Matchmaker
 from app.ws.manager import RoomManager, make_player
 
 
-@pytest.mark.asyncio
-async def test_first_player_gets_future_second_gets_room():
-    mgr = RoomManager()
-    mm = Matchmaker(mgr)
+async def _noop_start(_room):
+    pass
 
+
+async def _noop_broadcast(*_args, **_kwargs):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_first_player_creates_pending_room_no_countdown():
+    mgr = RoomManager()
+    mm = Matchmaker(mgr, on_start=_noop_start, broadcast=_noop_broadcast)
+    p1 = make_player("alice")
+
+    room, deadline = await mm.enqueue(p1)
+    assert room.mode == "random"
+    assert p1.id in room.players
+    assert room.capacity == Matchmaker.MAX_PLAYERS
+    assert deadline is None  # countdown only starts at 2 players
+
+
+@pytest.mark.asyncio
+async def test_second_player_joins_same_room_starts_countdown():
+    mgr = RoomManager()
+    mm = Matchmaker(mgr, on_start=_noop_start, broadcast=_noop_broadcast)
     p1 = make_player("alice")
     p2 = make_player("bob")
 
-    r1 = await mm.enqueue(p1)
-    assert isinstance(r1, asyncio.Future)
-    assert mm.position(p1.id) == 1
-
-    r2 = await mm.enqueue(p2)
-    # second one matches immediately and returns Room
-    from app.game.room import Room
-    assert isinstance(r2, Room)
-    assert p1.id in r2.players
-    assert p2.id in r2.players
-
-    # the first player's future is now resolved with the same room
-    resolved = await asyncio.wait_for(r1, timeout=0.5)
-    assert resolved is r2
+    room1, _ = await mm.enqueue(p1)
+    room2, deadline = await mm.enqueue(p2)
+    assert room1 is room2
+    assert {p1.id, p2.id} <= set(room2.players.keys())
+    assert deadline is not None  # countdown armed
+    # Cleanup the spawned countdown task
+    await mm.player_left(p2.id, room2)
+    await mm.player_left(p1.id, room1)
 
 
 @pytest.mark.asyncio
-async def test_cancel_removes_from_queue():
+async def test_filling_to_max_short_circuits_to_3s():
     mgr = RoomManager()
-    mm = Matchmaker(mgr)
+    mm = Matchmaker(mgr, on_start=_noop_start, broadcast=_noop_broadcast)
+    players = [make_player(f"p{i}") for i in range(Matchmaker.MAX_PLAYERS)]
+    last_deadline = None
+    for p in players:
+        _, last_deadline = await mm.enqueue(p)
+    # When MAX is reached the deadline gets shortened. Compare against the
+    # 30s mark — it must be substantially less now.
+    import time
+    remaining_ms = last_deadline - int(time.time() * 1000)
+    assert remaining_ms <= Matchmaker.WAIT_WHEN_FULL * 1000 + 200
 
+
+@pytest.mark.asyncio
+async def test_player_left_below_min_cancels_countdown():
+    mgr = RoomManager()
+    mm = Matchmaker(mgr, on_start=_noop_start, broadcast=_noop_broadcast)
     p1 = make_player("alice")
-    fut = await mm.enqueue(p1)
-    assert isinstance(fut, asyncio.Future)
-
-    await mm.cancel(p1.id)
-    assert mm.position(p1.id) == 0
-    assert fut.cancelled()
+    p2 = make_player("bob")
+    room, _ = await mm.enqueue(p1)
+    room, deadline = await mm.enqueue(p2)
+    assert deadline is not None
+    # Player 2 leaves — the room drops back to 1 player, countdown cancels
+    room.players.pop(p2.id, None)
+    await mm.player_left(p2.id, room)
+    assert mm.deadline_ms is None

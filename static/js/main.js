@@ -51,6 +51,8 @@ const state = {
   replayCumScores: {},
   focusedPlayerId: null,
   gameWinnerId: null,
+  matchDeadlineMs: null,
+  matchTickerId: null,
 };
 
 const sumBadge = $("sumBadge");
@@ -357,6 +359,11 @@ function resetState() {
   state.initialBoard = null;
   state.focusedPlayerId = null;
   state.gameWinnerId = null;
+  state.matchDeadlineMs = null;
+  if (state.matchTickerId) {
+    clearInterval(state.matchTickerId);
+    state.matchTickerId = null;
+  }
   state.miniRenderers.clear();
   state.lbItems.clear();
   $("lbList").innerHTML = "";
@@ -437,6 +444,21 @@ function bindSocket(ws) {
 
   ws.addEventListener("msg:queued", (e) => {
     $("lobbyMsg").textContent = `매칭 대기열 ${e.detail.position}번째…`;
+  });
+
+  ws.addEventListener("msg:match_countdown", (e) => {
+    state.matchDeadlineMs = e.detail.deadline_ms;
+    renderLobby();
+    startMatchCountdownTicker();
+  });
+
+  ws.addEventListener("msg:match_countdown_cancel", () => {
+    state.matchDeadlineMs = null;
+    if (state.matchTickerId) {
+      clearInterval(state.matchTickerId);
+      state.matchTickerId = null;
+    }
+    renderLobby();
   });
 
   ws.addEventListener("msg:not_found", () => {
@@ -620,6 +642,12 @@ function onGameStart(m) {
   state.endsAt = m.ends_at * 1000;
   state.startedAt = state.endsAt - GAME_DURATION_MS;
   state.events = [];
+  // Match countdown done — clear it
+  state.matchDeadlineMs = null;
+  if (state.matchTickerId) {
+    clearInterval(state.matchTickerId);
+    state.matchTickerId = null;
+  }
   state.initialBoard = m.board.map((row) => row.slice());
   state.scores = {};
   for (const p of state.room?.players ?? []) state.scores[p.id] = 0;
@@ -688,6 +716,11 @@ function renderLobby() {
       ? `2~50명 사이로 직접 입력 (현재 인원 ${cnt}명 미만으로는 줄일 수 없음)`
       : `호스트가 설정합니다 (현재 ${cap}명)`;
   }
+
+  // Nickname input: hidden in random match (anonymous)
+  const nickSection = nickInput.closest(".section");
+  if (nickSection) nickSection.hidden = (state.mode === "random");
+
   if (state.mode === "friend") {
     if (cnt < 2) {
       $("lobbyMsg").textContent = "친구에게 코드 또는 초대 링크를 공유하세요.";
@@ -698,7 +731,35 @@ function renderLobby() {
     } else {
       $("lobbyMsg").textContent = "방장이 시작하기를 기다리는 중…";
     }
+  } else if (state.mode === "random") {
+    if (cnt < 2) {
+      $("lobbyMsg").textContent = `상대를 기다리는 중... (${cnt}/${cap})`;
+    } else if (state.matchDeadlineMs) {
+      const remaining = Math.max(0, state.matchDeadlineMs - Date.now());
+      const sec = Math.ceil(remaining / 1000);
+      $("lobbyMsg").textContent = `${cnt}명 매칭됨 — ${sec}초 후 시작`;
+    } else {
+      $("lobbyMsg").textContent = `${cnt}명 매칭됨`;
+    }
   }
+}
+
+function startMatchCountdownTicker() {
+  if (state.matchTickerId) clearInterval(state.matchTickerId);
+  state.matchTickerId = setInterval(() => {
+    if (!state.matchDeadlineMs) {
+      clearInterval(state.matchTickerId);
+      state.matchTickerId = null;
+      return;
+    }
+    if (Date.now() >= state.matchDeadlineMs + 200) {
+      // Timer should have fired; stop ticking (server will push game_start)
+      clearInterval(state.matchTickerId);
+      state.matchTickerId = null;
+      return;
+    }
+    if (!screens.lobby.hidden) renderLobby();
+  }, 250);
 }
 
 // ---- Leaderboard ----

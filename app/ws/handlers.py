@@ -58,6 +58,10 @@ async def session(
         intent = hello.get("intent", "solo")
         code = (hello.get("code") or "").strip().upper()
 
+        # Random match: ignore client-supplied nickname so all players are
+        # auto-assigned Player-XXXX. Random matches stay anonymous.
+        if intent == "match":
+            nickname = ""
         player = make_player(nickname, ws=ws)
 
         if intent == "reconnect":
@@ -129,15 +133,7 @@ async def session(
             async with room.lock:
                 room.players[player.id] = player
         elif intent == "match":
-            result = await matchmaker.enqueue(player)
-            if isinstance(result, Room):
-                room = result
-            else:
-                await send(player, S.msg(S.QUEUED, position=matchmaker.position(player.id)))
-                try:
-                    room = await result
-                except asyncio.CancelledError:
-                    return
+            room, _deadline_ms = await matchmaker.enqueue(player)
         else:
             await ws.send_json(S.msg(S.ERROR, code="bad_intent", message=f"unknown intent {intent!r}"))
             await ws.close()
@@ -147,11 +143,12 @@ async def session(
         await send(player, S.msg(S.JOINED, player_id=player.id, room=room.public()))
         await broadcast(room, S.msg(S.PEER_JOINED, player=player.public()), exclude=player.id)
 
-        # 3. Auto-start for solo and random match (when both joined)
+        # 3. Auto-start for solo. Random match starts via matchmaker
+        # countdown; tell the new player the current deadline if any.
         if room.mode == "solo":
             await _start_game(room)
-        elif room.mode == "random" and room.is_full and room.state == "waiting":
-            await _start_game(room)
+        elif room.mode == "random":
+            await matchmaker.announce_countdown(room)
 
         # 4. Main message loop
         await _message_loop(ws, player, room, manager)
@@ -187,6 +184,8 @@ async def _message_loop(
             await broadcast(room, S.msg(S.CAPACITY_CHANGED, capacity=new_cap))
 
         elif mtype == S.RENAME:
+            if room.mode == "random":
+                continue  # random matches stay anonymous
             new = (data.get("nickname") or "").strip()[:20]
             if not new:
                 continue
@@ -333,8 +332,6 @@ async def _cleanup(
 ) -> None:
     if player is None:
         return
-    if matchmaker:
-        await matchmaker.cancel(player.id)
     if room is None:
         return
 
@@ -353,7 +350,10 @@ async def _cleanup(
         return
 
     if state == "waiting":
-        # Lobby disconnect → remove from room (no reconnect for lobby).
+        # Random matchmaking room: ask matchmaker first so it can cancel
+        # any countdown that should no longer fire.
+        if room.mode == "random":
+            await matchmaker.player_left(player.id, room)
         async with room.lock:
             room.players.pop(player.id, None)
             empty = not room.players

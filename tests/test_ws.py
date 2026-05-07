@@ -308,14 +308,39 @@ def test_join_unknown_room():
         assert msg["type"] == "not_found"
 
 
-def test_random_match_first_client_queued():
-    """First client to enter random match gets queued message."""
+def test_random_match_first_client_joins_pending_room():
+    """First client to enter random match goes straight into a pending room
+    (no countdown yet). Nickname is replaced with a server-assigned one
+    regardless of what the client sent."""
     client = TestClient(app)
     with client.websocket_connect("/ws") as a:
         _hello(a, "alice", "match")
-        first = a.receive_json()
-        assert first["type"] == "queued"
-        assert first["position"] >= 1
+        joined = a.receive_json()
+        assert joined["type"] == "joined"
+        assert joined["room"]["mode"] == "random"
+        assert joined["room"]["capacity"] == 16
+        # Random match anonymises — server-assigned Player-XXXX
+        nick = joined["room"]["players"][0]["nickname"]
+        assert nick.startswith("Player-")
+        assert nick != "alice"
+
+
+def test_random_match_second_client_triggers_countdown():
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as a:
+        _hello(a, "alice", "match")
+        a.receive_json()  # joined (no countdown yet)
+        with client.websocket_connect("/ws") as b:
+            _hello(b, "bob", "match")
+            # Drain b's messages until match_countdown
+            saw_countdown = False
+            for _ in range(6):
+                m = b.receive_json()
+                if m["type"] == "match_countdown":
+                    saw_countdown = True
+                    assert "deadline_ms" in m
+                    break
+            assert saw_countdown
 
 
 def test_game_end_broadcast_on_timer_expiry(monkeypatch):
