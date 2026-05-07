@@ -57,6 +57,11 @@ const sumBadge = $("sumBadge");
 const canvas = $("board");
 state.bigRenderer = new BoardRenderer(canvas);
 
+// Queue of submits awaiting server confirmation. Used to (a) skip the
+// re-apply when our own clear comes back and (b) roll the optimistic
+// apply back on reject.
+state._pendingSubmits = [];
+
 attachDragInput(canvas, state.bigRenderer, {
   onUpdate: (rect) => {
     if (state.replayActive) return;
@@ -78,6 +83,33 @@ attachDragInput(canvas, state.bigRenderer, {
     sumBadge.hidden = true;
     if (state.replayActive) return;
     if (state.focusedPlayerId !== state.playerId) return;
+
+    // Optimistic local clear — apply immediately if the rect locally
+    // sums to 10, so users see the apples vanish without waiting for
+    // a network round trip. Server stays authoritative; on reject we
+    // roll back via restoreCells.
+    const board = state.bigRenderer.board;
+    const cellsWithValue = [];
+    let total = 0;
+    if (board) {
+      for (let r = rect.r1; r <= rect.r2; r++) {
+        for (let c = rect.c1; c <= rect.c2; c++) {
+          const v = board[r]?.[c] ?? 0;
+          if (v > 0) {
+            total += v;
+            cellsWithValue.push({ r, c, value: v });
+          }
+        }
+      }
+    }
+    let applied = false;
+    if (total === 10 && cellsWithValue.length > 0) {
+      const arr = cellsWithValue.map((c) => [c.r, c.c]);
+      state.bigRenderer.clearCells(arr);
+      state.miniRenderers.get(state.playerId)?.clearCells(arr);
+      applied = true;
+    }
+    state._pendingSubmits.push({ cells: cellsWithValue, applied });
     state.ws?.send("submit", rect);
   },
 });
@@ -471,21 +503,38 @@ function bindSocket(ws) {
   ws.addEventListener("msg:clear", (e) => {
     const { cells, scores, player_id, t_ms } = e.detail;
     state.events.push({ t_ms: t_ms ?? 0, player_id, cells });
-    const mini = state.miniRenderers.get(player_id);
-    if (mini) {
-      mini.clearCells(cells);
-      mini.setMyDrag(null);
-    }
-    if (player_id === state.focusedPlayerId) {
-      state.bigRenderer.clearCells(cells);
+    if (player_id === state.playerId) {
+      // Server confirmation of my own submit. Pop the matching pending
+      // entry; only re-apply if it wasn't done optimistically already.
+      const pending = state._pendingSubmits.shift();
+      if (!pending?.applied) {
+        state.bigRenderer.clearCells(cells);
+        state.miniRenderers.get(player_id)?.clearCells(cells);
+      }
+      state.miniRenderers.get(player_id)?.setMyDrag(null);
       state.bigRenderer.setMyDrag(null);
+    } else {
+      const mini = state.miniRenderers.get(player_id);
+      if (mini) {
+        mini.clearCells(cells);
+        mini.setMyDrag(null);
+      }
+      if (player_id === state.focusedPlayerId) {
+        state.bigRenderer.clearCells(cells);
+        state.bigRenderer.setMyDrag(null);
+      }
     }
     state.scores = scores;
     reorderAndRankLeaderboard();
   });
 
   ws.addEventListener("msg:reject", () => {
-    // Optional visual feedback
+    // Roll back the optimistic apply for the matching pending submit.
+    const pending = state._pendingSubmits.shift();
+    if (pending?.applied && pending.cells.length > 0) {
+      state.bigRenderer.restoreCells(pending.cells);
+      state.miniRenderers.get(state.playerId)?.restoreCells(pending.cells);
+    }
   });
 
   ws.addEventListener("msg:game_end", (e) => {

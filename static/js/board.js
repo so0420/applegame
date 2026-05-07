@@ -6,6 +6,12 @@
 export const ROWS = 10;
 export const COLS = 17;
 
+function rectsEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
+}
+
 const APPLE_RED = "#e53935";
 const APPLE_DARK = "#b71c1c";
 const TEXT_COLOR = "#ffffff";
@@ -52,7 +58,9 @@ export class BoardRenderer {
     if (!this.board) return;
     const now = performance.now();
     for (const [r, c] of cells) {
-      this._fadingCells.push({ r, c, value: this.board[r][c], start: now, duration: 220 });
+      const v = this.board[r][c];
+      if (v === 0) continue;  // already cleared (e.g. optimistic apply)
+      this._fadingCells.push({ r, c, value: v, start: now, duration: 100 });
       this.board[r][c] = 0;
     }
     this._scheduleAnim();
@@ -66,8 +74,32 @@ export class BoardRenderer {
     this.render();
   }
 
-  setMyDrag(rect) { this.myDrag = rect; this.render(); }
-  setPeerDrag(rect) { this.peerDrag = rect; this.render(); }
+  // Undo a recent clear — used to roll back an optimistic local apply
+  // when the server rejects the submit.
+  restoreCells(cells) {
+    if (!this.board) return;
+    const keys = new Set();
+    for (const c of cells) {
+      this.board[c.r][c.c] = c.value;
+      keys.add(c.r + "," + c.c);
+    }
+    // Cancel any in-flight fade for these cells so they snap back cleanly
+    this._fadingCells = this._fadingCells.filter(
+      (f) => !keys.has(f.r + "," + f.c),
+    );
+    this.render();
+  }
+
+  setMyDrag(rect) {
+    if (rectsEqual(rect, this.myDrag)) return;  // skip needless rerenders
+    this.myDrag = rect;
+    this.render();
+  }
+  setPeerDrag(rect) {
+    if (rectsEqual(rect, this.peerDrag)) return;
+    this.peerDrag = rect;
+    this.render();
+  }
 
   shouldRotate() {
     if (this.mini) return false;

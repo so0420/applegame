@@ -213,7 +213,11 @@ async def _message_loop(
             r1, c1, r2, c2 = (data.get("r1"), data.get("c1"), data.get("r2"), data.get("c2"))
             if None in (r1, c1, r2, c2):
                 continue
-            player.last_drag = (r1, c1, r2, c2)
+            new_drag = (r1, c1, r2, c2)
+            # Skip if rect hasn't moved — saves a broadcast per peer.
+            if player.last_drag == new_drag:
+                continue
+            player.last_drag = new_drag
             await broadcast(
                 room,
                 S.msg(S.PEER_DRAG, player_id=player.id, r1=r1, c1=c1, r2=r2, c2=c2),

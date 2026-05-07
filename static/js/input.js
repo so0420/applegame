@@ -1,12 +1,13 @@
 // Pointer Events handler — unifies mouse + touch + pen.
 
-const DRAG_THROTTLE_MS = 30;
+const DRAG_THROTTLE_MS = 60;
 
 export function attachDragInput(canvas, renderer, callbacks) {
   let dragging = false;
   let pointerId = null;
   let start = null;
   let lastSent = 0;
+  let lastSentRect = null;
 
   function rectFrom(a, b) {
     return {
@@ -15,6 +16,10 @@ export function attachDragInput(canvas, renderer, callbacks) {
       r2: Math.max(a.r, b.r),
       c2: Math.max(a.c, b.c),
     };
+  }
+  function rectsEqual(a, b) {
+    if (!a || !b) return false;
+    return a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
   }
 
   canvas.addEventListener("pointerdown", (e) => {
@@ -36,9 +41,13 @@ export function attachDragInput(canvas, renderer, callbacks) {
     if (!cell) return;
     const rect = rectFrom(start, cell);
     renderer.setMyDrag(rect);
+    // Throttle the network broadcast AND skip if the rect didn't change
+    // (pointer moved within the same cell / outside the board) — biggest
+    // single source of WS traffic during play.
     const now = performance.now();
-    if (now - lastSent >= DRAG_THROTTLE_MS) {
+    if (now - lastSent >= DRAG_THROTTLE_MS && !rectsEqual(rect, lastSentRect)) {
       lastSent = now;
+      lastSentRect = rect;
       callbacks.onUpdate?.(rect);
     }
   });
@@ -47,6 +56,7 @@ export function attachDragInput(canvas, renderer, callbacks) {
     if (!dragging || (e && e.pointerId !== pointerId)) return;
     dragging = false;
     pointerId = null;
+    lastSentRect = null;
     try { if (e) canvas.releasePointerCapture(e.pointerId); } catch {}
     const rect = renderer.myDrag;
     renderer.setMyDrag(null);
