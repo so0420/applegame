@@ -11,14 +11,15 @@
   <div id="mobileGameUi" class="mobile-game-ui">
     <button class="corner-btn corner-tl" id="cornerDrawerBtn" aria-label="순위">☰</button>
     <button class="corner-btn corner-tr" id="cornerHomeBtn" aria-label="홈">⌂</button>
-    <div class="bottom-strip">
-      <div class="big-score" id="bigScore">0</div>
-      <div class="big-progress">
-        <div class="big-progress-fill" id="bigProgressFill"></div>
-      </div>
-      <div class="bottom-timer" id="bigTimer">2:00</div>
-    </div>
   </div>
+  <!-- Vertical timer bar pinned to the right edge of the viewport -->
+  <div id="verticalProgress" class="vertical-progress">
+    <div class="vertical-progress-fill" id="verticalProgressFill"></div>
+  </div>
+
+  <!-- Sum-of-drag badge: must live outside any transformed ancestor so
+       position: fixed stays in viewport coords and transforms don't stack. -->
+  <div id="sumBadge" class="sum-badge" hidden>0</div>
 
   <main id="app">
 
@@ -154,7 +155,6 @@
         <main class="board-area">
           <div id="focusLabel" class="focus-label" hidden></div>
           <canvas id="board"></canvas>
-          <div id="sumBadge" class="sum-badge" hidden>0</div>
         </main>
       </div>
       <div id="drawerBackdrop" class="drawer-backdrop"></div>

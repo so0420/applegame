@@ -330,9 +330,7 @@ function resetState() {
   $("lbList").innerHTML = "";
   $("nickInput").value = "";
   $("progressFill").style.width = "0%";
-  $("bigProgressFill").style.width = "0%";
-  $("bigScore").textContent = "0";
-  $("bigTimer").textContent = "2:00";
+  $("verticalProgressFill").style.height = "0%";
   $("resultBanner").hidden = true;
   $("topProgress").hidden = false;
   $("focusLabel").hidden = true;
@@ -744,7 +742,6 @@ function reorderAndRankLeaderboard(scoresOverride = null) {
     if (p.id === state.playerId) {
       $("myRank").textContent = `#${idx + 1}`;
       $("myScoreNum").textContent = String(scores[p.id] || 0);
-      $("bigScore").textContent = String(scores[p.id] || 0);
       state.myScore = scores[p.id] || 0;
     }
   });
@@ -763,7 +760,6 @@ function startTimer() {
     el.textContent = text;
     el.classList.toggle("warn", sec <= 30 && sec > 10);
     el.classList.toggle("danger", sec <= 10);
-    $("bigTimer").textContent = text;
     if (remaining <= 0 && state.timerInterval) {
       clearInterval(state.timerInterval);
       state.timerInterval = null;
@@ -777,21 +773,21 @@ function startProgress() {
   if (state.progressInterval) clearInterval(state.progressInterval);
   const startTs = state.startedAt;
   const fill = $("progressFill");
-  const bigFill = $("bigProgressFill");
+  const vfill = $("verticalProgressFill");
   fill.classList.remove("warn", "danger");
-  bigFill.classList.remove("warn", "danger");
+  vfill.classList.remove("warn", "danger");
   const tick = () => {
     const elapsed = Date.now() - startTs;
     const pct = Math.min(100, (elapsed / GAME_DURATION_MS) * 100);
     fill.style.width = pct + "%";
-    bigFill.style.width = pct + "%";
+    vfill.style.height = pct + "%";
     const remaining = GAME_DURATION_MS - elapsed;
     const warn = remaining <= 30000 && remaining > 10000;
     const danger = remaining <= 10000;
     fill.classList.toggle("warn", warn);
     fill.classList.toggle("danger", danger);
-    bigFill.classList.toggle("warn", warn);
-    bigFill.classList.toggle("danger", danger);
+    vfill.classList.toggle("warn", warn);
+    vfill.classList.toggle("danger", danger);
     if (elapsed >= GAME_DURATION_MS) {
       clearInterval(state.progressInterval);
       state.progressInterval = null;
@@ -974,14 +970,13 @@ function updateReplayProgress() {
   $("replayScrubFill").style.width = pct + "%";
   $("replayScrubThumb").style.left = pct + "%";
   $("progressFill").style.width = pct + "%";
-  $("bigProgressFill").style.width = pct + "%";
+  $("verticalProgressFill").style.height = pct + "%";
   $("replayCurrent").textContent = formatMmSs(state.replayTime);
   // Top-bar timer counts down so it matches the live game look
   const remaining = Math.max(0, GAME_DURATION_MS - state.replayTime);
   const text = formatMmSs(remaining);
   const timerEl = $("timer");
   timerEl.textContent = text;
-  $("bigTimer").textContent = text;
   const remSec = Math.ceil(remaining / 1000);
   const warn = remSec <= 30 && remSec > 10;
   const danger = remSec <= 10;
@@ -990,8 +985,9 @@ function updateReplayProgress() {
   const fill = $("progressFill");
   fill.classList.toggle("warn", warn);
   fill.classList.toggle("danger", danger);
-  $("bigProgressFill").classList.toggle("warn", warn);
-  $("bigProgressFill").classList.toggle("danger", danger);
+  const vfill = $("verticalProgressFill");
+  vfill.classList.toggle("warn", warn);
+  vfill.classList.toggle("danger", danger);
 }
 
 function updateReplaySpeedButtons() {
