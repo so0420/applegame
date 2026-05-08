@@ -32,10 +32,10 @@ python -m pip install -r requirements.txt
 python applegame.py
 ```
 
-또는 reload 모드 (이 경우 백그라운드 탭에서 ping 타임아웃으로 끊기지 않게 ping을 끄는 게 좋음):
+또는 reload 모드 (백그라운드 탭에서 끊기지 않게 ping 타임아웃을 길게):
 
 ```powershell
-python -m uvicorn app.main:app --reload --ws-ping-interval=0
+python -m uvicorn app.main:app --reload --ws-ping-interval=30 --ws-ping-timeout=120
 ```
 
 브라우저에서 `http://127.0.0.1:8000` 접속.

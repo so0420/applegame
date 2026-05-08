@@ -25,13 +25,15 @@ if __name__ == "__main__":
     for ip in _local_ips():
         print(f"  network:  http://{ip}:{port}", flush=True)
     # Bind to 0.0.0.0 so other devices on the LAN can connect.
-    # Disable uvicorn's WebSocket keepalive pings — Chromium throttles
-    # background tabs aggressively and the default 20s pong timeout
-    # would drop connections whenever a player Alt-Tabs away.
+    # WebSocket keepalive: pings every 30 s keep idle proxies/NATs from
+    # dropping the connection (most cloud edges idle out at ~60 s), and a
+    # 120 s pong timeout is long enough for Chromium's aggressive
+    # background-tab throttling to still respond before the server gives
+    # up. The client also sends its own heartbeat as a belt-and-braces.
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=port,
-        ws_ping_interval=None,
-        ws_ping_timeout=None,
+        ws_ping_interval=30,
+        ws_ping_timeout=120,
     )
