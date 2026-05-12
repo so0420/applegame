@@ -330,7 +330,7 @@ def test_combo_broken_when_gap_exceeds_window():
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
         room.players[host_id].combo_count = 2
-        room.players[host_id].last_score_ts = time.time() - 1.0  # >0.3s ago
+        room.players[host_id].last_score_ts = time.time() - 2.0  # clearly past window
         room.golden[host_id] = set()
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5

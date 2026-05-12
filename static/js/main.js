@@ -925,9 +925,7 @@ function setCombo(n) {
   state.combo = n;
   const badge = $("comboBadge");
   const mob = $("mobileCombo");
-  // Only show the badge once a real chain forms (≥2). 콤보 1은
-  // 그냥 "방금 클리어한 거 1개" 수준이라 매번 떴다 사라지면 노이즈만 됨.
-  if (n >= 2) {
+  if (n > 0) {
     $("comboCount").textContent = String(n);
     $("mobileComboCount").textContent = String(n);
     badge.hidden = false;
