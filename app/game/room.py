@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -30,6 +31,14 @@ INITIAL_GOLDEN_COUNT = 3
 COMBO_THRESHOLD = 5
 COMBO_WINDOW_S = 2.0
 BIG_CLEAR_CELLS = 4
+# Anti-macro: every successful SUBMIT must satisfy all three.
+# Tuned so a fast-but-human pace passes while the typical bot
+# (back-to-back synthetic events, no real drag) gets rejected.
+MIN_SUBMIT_GAP_S = 0.08         # ~12.5 clears/s ceiling
+MAX_SUBMITS_PER_1S = 8          # sustained 1s window
+MAX_SUBMITS_PER_3S = 20         # sustained 3s window
+MIN_DRAG_DURATION_S = 0.04      # 40ms — almost instantaneous drag = bot
+MAX_DRAG_UPDATES_PER_S = 30     # drop excess drag broadcasts silently
 
 
 @dataclass
@@ -48,6 +57,11 @@ class Player:
     double_until: float = 0.0       # score-multiplier deadline (epoch s)
     blind_until: float = 0.0        # number-hide deadline imposed on me
     combo_count: int = 0            # consecutive-clear streak (within window)
+    # Anti-macro state (server-side; not exposed to the client)
+    submit_history: deque[float] = field(default_factory=lambda: deque(maxlen=64))
+    drag_started_at: float | None = None
+    drag_update_history: deque[float] = field(default_factory=lambda: deque(maxlen=64))
+    drag_updates_in_gesture: int = 0
 
     def public(self) -> dict[str, Any]:
         return {
@@ -126,6 +140,10 @@ class Room:
             p.double_until = 0.0
             p.blind_until = 0.0
             p.combo_count = 0
+            p.submit_history.clear()
+            p.drag_started_at = None
+            p.drag_update_history.clear()
+            p.drag_updates_in_gesture = 0
 
     def start(self) -> None:
         self._init_boards()
@@ -139,6 +157,10 @@ class Room:
             p.double_until = 0.0
             p.blind_until = 0.0
             p.combo_count = 0
+            p.submit_history.clear()
+            p.drag_started_at = None
+            p.drag_update_history.clear()
+            p.drag_updates_in_gesture = 0
 
     def _init_boards(self) -> None:
         """Generate one master board, deep-copy per player."""

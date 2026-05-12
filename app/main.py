@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from .anti_vpn import AntiVPNMiddleware, _client_ip, is_blocked_ip
 from .matchmaking import Matchmaker
 from .ws.handlers import _start_game, session
 from .ws.manager import RoomManager, broadcast
@@ -40,6 +41,7 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(NoCacheMiddleware)
+app.add_middleware(AntiVPNMiddleware)
 
 manager = RoomManager()
 matchmaker = Matchmaker(manager, on_start=_start_game, broadcast=broadcast)
@@ -57,6 +59,13 @@ async def healthz() -> dict[str, str]:
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
+    # HTTP middlewares aren't invoked for WebSocket upgrades, so the
+    # VPN/datacenter check has to run here too.
+    headers = {k.decode().lower(): v.decode() for k, v in websocket.headers.raw}
+    client_host = websocket.client.host if websocket.client else None
+    if is_blocked_ip(_client_ip(headers, client_host)):
+        await websocket.close(code=1008, reason="blocked_network")
+        return
     await session(websocket, manager, matchmaker)
 
 

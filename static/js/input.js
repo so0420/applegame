@@ -2,6 +2,14 @@
 
 const DRAG_THROTTLE_MS = 60;
 
+// Anti-macro: only honour pointer events that the browser itself dispatched.
+// Synthetic events created via element.dispatchEvent(new PointerEvent(...))
+// arrive with isTrusted === false and are the primary way extensions /
+// userscripts drive macros. Real user input has isTrusted === true.
+function isReal(e) {
+  return e && e.isTrusted === true;
+}
+
 export function attachDragInput(canvas, renderer, callbacks) {
   let dragging = false;
   let pointerId = null;
@@ -23,6 +31,7 @@ export function attachDragInput(canvas, renderer, callbacks) {
   }
 
   canvas.addEventListener("pointerdown", (e) => {
+    if (!isReal(e)) return;
     if (e.button && e.button !== 0) return;
     const cell = renderer.cellAt(e.clientX, e.clientY);
     if (!cell) return;
@@ -36,6 +45,7 @@ export function attachDragInput(canvas, renderer, callbacks) {
   });
 
   canvas.addEventListener("pointermove", (e) => {
+    if (!isReal(e)) return;
     if (!dragging || e.pointerId !== pointerId) return;
     const cell = renderer.cellAt(e.clientX, e.clientY);
     if (!cell) return;
@@ -53,6 +63,7 @@ export function attachDragInput(canvas, renderer, callbacks) {
   });
 
   function endDrag(e) {
+    if (e && !isReal(e)) return;
     if (!dragging || (e && e.pointerId !== pointerId)) return;
     dragging = false;
     pointerId = null;

@@ -29,6 +29,11 @@ from ..game.room import (
     GAME_DURATION,
     INVENTORY_SIZE,
     ITEM_KINDS,
+    MAX_DRAG_UPDATES_PER_S,
+    MAX_SUBMITS_PER_1S,
+    MAX_SUBMITS_PER_3S,
+    MIN_DRAG_DURATION_S,
+    MIN_SUBMIT_GAP_S,
     Player,
     Room,
 )
@@ -47,6 +52,38 @@ def _t_ms(room: Room) -> int:
     if room.started_at is None:
         return 0
     return int((time.time() - room.started_at) * 1000)
+
+
+def _anti_macro_reject_reason(player: Player, now: float) -> str | None:
+    """Return a reject reason string if this submit looks automated.
+
+    Three gates: minimum inter-submit gap, sliding-window rate limits,
+    and minimum drag duration. None of these are individually fatal
+    for fast-but-human play (12.5/s ceiling, 8/s sustained, 40ms drag).
+    """
+    history = player.submit_history
+    if history and (now - history[-1]) < MIN_SUBMIT_GAP_S:
+        return "too_fast"
+    in_1s = sum(1 for ts in history if now - ts <= 1.0)
+    if in_1s >= MAX_SUBMITS_PER_1S:
+        return "rate_limited"
+    in_3s = sum(1 for ts in history if now - ts <= 3.0)
+    if in_3s >= MAX_SUBMITS_PER_3S:
+        return "rate_limited"
+    started = player.drag_started_at
+    if started is None:
+        # SUBMIT without any drag_update is the cleanest bot signature —
+        # legitimate clients always emit at least one pointerdown-based
+        # drag update before the pointerup that fires submit.
+        return "no_drag"
+    if (now - started) < MIN_DRAG_DURATION_S:
+        return "too_fast_drag"
+    if player.drag_updates_in_gesture < 2:
+        # Any real cell-to-cell drag emits pointerdown + at least one
+        # pointermove update. A single drag_update before SUBMIT is the
+        # signature of a synthetic gesture (bot, extension auto-solve).
+        return "no_drag"
+    return None
 
 
 def _parse_capacity(raw: object) -> int:
@@ -258,6 +295,19 @@ async def _message_loop(
             # Skip if rect hasn't moved — saves a broadcast per peer.
             if player.last_drag == new_drag:
                 continue
+            now = time.time()
+            # Anti-flood: drop drag broadcasts beyond MAX_DRAG_UPDATES_PER_S.
+            recent = player.drag_update_history
+            while recent and now - recent[0] > 1.0:
+                recent.popleft()
+            if len(recent) >= MAX_DRAG_UPDATES_PER_S:
+                continue
+            recent.append(now)
+            # First drag in a fresh gesture stamps the start time. Used
+            # by _anti_macro_reject_reason on submit.
+            if player.drag_started_at is None:
+                player.drag_started_at = now
+            player.drag_updates_in_gesture += 1
             player.last_drag = new_drag
             await broadcast(
                 room,
@@ -324,11 +374,31 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         my_board = room.boards.get(player.id)
         if my_board is None:
             return
+        now = time.time()
+        # Anti-macro gate — runs BEFORE validate_and_clear so a bot can't
+        # discover whether its rect was geometrically valid by probing.
+        # The drag stamp is consumed on submit so a bot can't reuse one
+        # drag for many submits.
+        reason = _anti_macro_reject_reason(player, now)
+        # Always consume the gesture so the bot can't reuse one drag
+        # for many submits, even if this one got rejected.
+        player.drag_started_at = None
+        player.drag_updates_in_gesture = 0
+        if reason is not None:
+            log.info(
+                "anti-macro reject pid=%s reason=%s in1s=%d",
+                player.id, reason,
+                sum(1 for ts in player.submit_history if now - ts <= 1.0),
+            )
+            await send(player, S.msg(S.REJECT, reason=reason))
+            return
         cells = validate_and_clear(my_board, int(r1), int(c1), int(r2), int(c2))
         if cells is None:
             await send(player, S.msg(S.REJECT, reason="invalid_or_taken"))
             return
-        now = time.time()
+        # Record only successful submits in the rate window so legitimate
+        # mistypes don't count against the rate cap.
+        player.submit_history.append(now)
         prev_clear_ts = player.last_score_ts
         gained = len(cells)
         # 2× multiplier — applied if the effect is still active. Bonus is

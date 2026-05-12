@@ -22,6 +22,143 @@ def _drain_until(ws, mtype, limit=10):
     raise AssertionError(f"did not see {mtype}")
 
 
+def _fake_drag(player, when=None):
+    """Tests bypass the real pointer flow but the server's anti-macro
+    gate expects each submit to carry a drag context. Stamp the player
+    so a single submit can pass."""
+    import time as _t
+    player.drag_started_at = (when or _t.time()) - 0.1  # 100ms ago
+    player.drag_updates_in_gesture = 2
+
+
+# ------------------------------------------------------------------
+# Anti-macro gate tests
+# ------------------------------------------------------------------
+
+def _start_solo_game():
+    client = TestClient(app)
+    ws_ctx = client.websocket_connect("/ws")
+    ws = ws_ctx.__enter__()
+    ws.send_json({"type": "hello", "intent": "solo"})
+    joined = ws.receive_json()
+    room_id = joined["room"]["id"]
+    ws.receive_json()  # game_start
+    from app.main import manager
+    room = manager.get(room_id)
+    return ws_ctx, ws, room, joined["player_id"]
+
+
+def test_submit_without_drag_is_rejected_as_no_drag():
+    ctx, ws, room, pid = _start_solo_game()
+    try:
+        # No _fake_drag → drag_started_at is None
+        room.boards[pid] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[pid][0][0] = 5
+        room.boards[pid][0][1] = 5
+        ws.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        m = ws.receive_json()
+        assert m["type"] == "reject"
+        assert m["reason"] == "no_drag"
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_submit_with_single_drag_update_is_rejected_as_no_drag():
+    """A bot can stamp drag_started_at via one drag_update but real
+    cell-to-cell drags emit 2+. We require ≥2."""
+    ctx, ws, room, pid = _start_solo_game()
+    try:
+        room.boards[pid] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[pid][0][0] = 5
+        room.boards[pid][0][1] = 5
+        import time as _t
+        room.players[pid].drag_started_at = _t.time() - 0.1
+        room.players[pid].drag_updates_in_gesture = 1  # only one
+        ws.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        m = ws.receive_json()
+        assert m["type"] == "reject"
+        assert m["reason"] == "no_drag"
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_submit_instantly_after_drag_is_rejected_as_too_fast_drag():
+    ctx, ws, room, pid = _start_solo_game()
+    try:
+        room.boards[pid] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[pid][0][0] = 5
+        room.boards[pid][0][1] = 5
+        import time as _t
+        # drag started 5ms ago — well under MIN_DRAG_DURATION_S (40ms)
+        room.players[pid].drag_started_at = _t.time() - 0.005
+        room.players[pid].drag_updates_in_gesture = 2
+        ws.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        m = ws.receive_json()
+        assert m["type"] == "reject"
+        assert m["reason"] == "too_fast_drag"
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_rapid_submit_burst_is_rate_limited():
+    """Pre-seed the submit history so the next submit hits the per-second
+    cap — proves the rate-limit branch reaches the wire."""
+    ctx, ws, room, pid = _start_solo_game()
+    try:
+        import time as _t
+        now = _t.time()
+        # Fill the 1s window with MAX_SUBMITS_PER_1S timestamps
+        for i in range(8):
+            room.players[pid].submit_history.append(now - 0.01 * i)
+        room.boards[pid] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[pid][0][0] = 5
+        room.boards[pid][0][1] = 5
+        _fake_drag(room.players[pid])
+        ws.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        m = ws.receive_json()
+        assert m["type"] == "reject"
+        assert m["reason"] in ("rate_limited", "too_fast")
+    finally:
+        ctx.__exit__(None, None, None)
+
+
+def test_blocked_ip_via_xff_returns_403():
+    """A request with X-Forwarded-For inside a known cloud range gets 403."""
+    from fastapi.testclient import TestClient
+    # 3.0.0.1 is inside 3.0.0.0/9 (AWS) from the blocklist
+    resp = TestClient(app).get("/healthz", headers={"X-Forwarded-For": "3.0.0.1"})
+    assert resp.status_code == 403
+
+
+def test_blocked_ip_allows_private_lan():
+    """LAN / loopback addresses are always allowed even if they appeared
+    in a list — so dev / on-prem deploys keep working."""
+    from fastapi.testclient import TestClient
+    resp = TestClient(app).get("/healthz", headers={"X-Forwarded-For": "10.0.0.5"})
+    assert resp.status_code == 200
+
+
+def test_drag_update_count_caps_at_max_per_second():
+    """Server should silently drop drag updates beyond MAX_DRAG_UPDATES_PER_S
+    so a flood doesn't broadcast or rack up gesture credit."""
+    ctx, ws, room, pid = _start_solo_game()
+    try:
+        # Send many drag_updates rapidly
+        for r in range(2):
+            for c in range(20):
+                ws.send_json({"type": "drag_update",
+                              "r1": r, "c1": c, "r2": r, "c2": c})
+        # Give the server a moment to process; in solo no PEER_DRAG goes back
+        # so we can't drain. Instead poke an idempotent action and verify
+        # state directly.
+        import time as _t
+        _t.sleep(0.05)
+        # drag_update_history is bounded to MAX_DRAG_UPDATES_PER_S in last 1s
+        assert len(room.players[pid].drag_update_history) <= 30
+    finally:
+        ctx.__exit__(None, None, None)
+
+
 def test_shuffle_remaining_keeps_zeros_and_randomises_others():
     b = [[1] * COLS for _ in range(ROWS)]
     b[0][0] = 0
@@ -242,6 +379,7 @@ def test_clearing_golden_grants_item_and_shrinks_set():
         room.boards[host_id][0][1] = 5
         # Force golden marker on (0, 0) for this player only.
         room.golden[host_id] = {(0, 0)}
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         _drain_until(host, "clear")
         acq = _drain_until(host, "item_acquired")
@@ -266,6 +404,7 @@ def test_big_clear_grants_item_instantly():
             room.boards[host_id][0][c] = 2
         # Strip goldens so only the big-clear trigger fires
         room.golden[host_id] = set()
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 4})
         clear = _drain_until(host, "clear")
         assert len(clear["cells"]) == 5
@@ -291,6 +430,7 @@ def test_combo_threshold_clears_grant_item():
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         clear = _drain_until(host, "clear")
         assert clear["combo"] == 0       # reset right after the drop
@@ -311,6 +451,7 @@ def test_combo_below_threshold_does_not_set_triggered():
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         clear = _drain_until(host, "clear")
         assert clear["combo"] == 1
@@ -330,12 +471,16 @@ def test_combo_goes_up_to_two_within_window():
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         m1 = _drain_until(host, "clear")
         assert m1["combo"] == 1
-        # Second clear immediately afterward (well within 0.5s)
+        # Wait past MIN_SUBMIT_GAP_S so the anti-macro gate accepts the
+        # second submit. (TestClient round-trip is sub-ms otherwise.)
+        time.sleep(0.1)
         room.boards[host_id][1][0] = 5
         room.boards[host_id][1][1] = 5
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 1, "c1": 0, "r2": 1, "c2": 1})
         m2 = _drain_until(host, "clear")
         assert m2["combo"] == 2
@@ -354,6 +499,7 @@ def test_combo_broken_when_gap_exceeds_window():
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         clear = _drain_until(host, "clear")
         assert clear["combo"] == 1       # chain reset to 1
@@ -378,6 +524,7 @@ def test_simultaneous_triggers_grant_only_one_item():
         # Prearm combo so this clear becomes the threshold step.
         room.players[host_id].combo_count = 4
         room.players[host_id].last_score_ts = time.time()
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 4})
         clear = _drain_until(host, "clear")
         assert len(clear["cells"]) == 5
@@ -407,6 +554,7 @@ def test_clearing_non_golden_does_not_grant_item():
         # Make sure (0,0) and (0,1) are NOT golden.
         room.golden[host_id].discard((0, 0))
         room.golden[host_id].discard((0, 1))
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         m1 = host.receive_json()
         assert m1["type"] == "clear"
@@ -432,6 +580,7 @@ def test_golden_clear_with_full_inventory_consumes_cell_without_drop():
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
         room.golden[host_id] = {(0, 0)}
+        _fake_drag(room.players[host_id])
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         _drain_until(host, "clear")
         # Confirm no item_acquired comes through — use a benign rename to
