@@ -425,7 +425,18 @@ button.ghost:hover {
   font-size: 15px;
   gap: 8px;
 }
-.lobby-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lobby-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lobby-medals { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
+.medal {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
 .nick-edit-btn {
   background: transparent;
   color: var(--muted);

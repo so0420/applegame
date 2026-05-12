@@ -1156,6 +1156,20 @@ function onRoomUpdate(room) {
   renderLobby();
 }
 
+const MEDAL_ICONS = { gold: "🥇", silver: "🥈", bronze: "🥉" };
+
+function appendMedalBadges(parentSpan, medals) {
+  if (!medals) return;
+  for (const kind of ["gold", "silver", "bronze"]) {
+    const n = medals[kind] | 0;
+    if (n <= 0) continue;
+    const badge = document.createElement("span");
+    badge.className = `medal medal-${kind}`;
+    badge.textContent = `${MEDAL_ICONS[kind]}x${n}`;
+    parentSpan.appendChild(badge);
+  }
+}
+
 function renderLobby() {
   if (!state.room) return;
   const list = $("playerList");
@@ -1169,6 +1183,11 @@ function renderLobby() {
     nameSpan.className = "lobby-name";
     nameSpan.textContent = p.nickname + (isMe ? " (나)" : "");
     li.appendChild(nameSpan);
+
+    const medalsSpan = document.createElement("span");
+    medalsSpan.className = "lobby-medals";
+    appendMedalBadges(medalsSpan, p.medals);
+    if (medalsSpan.childNodes.length > 0) li.appendChild(medalsSpan);
 
     if (isMe && canRenameMe) {
       const editBtn = document.createElement("button");

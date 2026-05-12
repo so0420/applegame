@@ -60,6 +60,11 @@ class Player:
     combo_count: int = 0            # consecutive-clear streak (within window)
     # Anti-macro state (server-side; not exposed to the client)
     submit_history: deque[float] = field(default_factory=lambda: deque(maxlen=64))
+    # Medals earned in this room across rounds (friend mode only).
+    # Reset implicitly when the player leaves and the Player object is dropped.
+    medals: dict[str, int] = field(
+        default_factory=lambda: {"gold": 0, "silver": 0, "bronze": 0}
+    )
 
     def public(self) -> dict[str, Any]:
         return {
@@ -69,6 +74,7 @@ class Player:
             "connected": self.connected,
             "inventory": list(self.inventory),
             "combo": self.combo_count,
+            "medals": dict(self.medals),
         }
 
 

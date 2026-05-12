@@ -615,6 +615,7 @@ async def _end_game(room: Room) -> None:
         room.timer_task = None
         room.winner_id = room.determine_winner()
         scores = {p.id: p.score for p in room.players.values()}
+        _award_medals(room)
     # Cancel the timeout task only if we're ending early (not from inside it).
     # Cancelling the current task would interrupt the broadcast below.
     current = asyncio.current_task()
@@ -626,6 +627,22 @@ async def _end_game(room: Room) -> None:
     )
 
 
+def _award_medals(room: Room) -> None:
+    """Friend rooms only: bump top-3 medal counts on the Player objects.
+    Two-player rooms get no bronze; players who scored 0 get nothing."""
+    if room.mode != "friend":
+        return
+    scored = sorted(
+        room.players.values(),
+        key=lambda p: (-p.score, p.last_score_ts or float("inf")),
+    )
+    kinds = ("gold", "silver", "bronze")
+    for i, p in enumerate(scored[:3]):
+        if p.score <= 0:
+            continue
+        p.medals[kinds[i]] = p.medals.get(kinds[i], 0) + 1
+
+
 async def _handle_rematch(room: Room, player: Player) -> None:
     async with room.lock:
         if room.state != "finished":
@@ -633,6 +650,13 @@ async def _handle_rematch(room: Room, player: Player) -> None:
         # Only host (friend mode) or any player (solo/random) can trigger rematch
         if room.mode == "friend" and player.id != room.host_id:
             return
+        if room.mode == "friend":
+            # Sweep ghosts: players still in the roster who never reconnected
+            # after dropping during the last round. The lobby for the next
+            # round should show only currently-present players.
+            ghosts = [pid for pid, p in room.players.items() if not p.connected]
+            for pid in ghosts:
+                room.players.pop(pid, None)
         room.reset_for_rematch()
         room_snapshot = room.public()
     if room.mode == "friend":
