@@ -62,11 +62,8 @@ class RoomManager:
     async def remove(self, room_id: str) -> None:
         async with self._lock:
             room = self.rooms.pop(room_id, None)
-            if room:
-                if room.timer_task and not room.timer_task.done():
-                    room.timer_task.cancel()
-                if room.golden_task and not room.golden_task.done():
-                    room.golden_task.cancel()
+            if room and room.timer_task and not room.timer_task.done():
+                room.timer_task.cancel()
                 log.info("room removed id=%s", room_id)
 
 

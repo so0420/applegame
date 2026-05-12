@@ -19,6 +19,10 @@
     <div class="mobile-inventory" id="mobileInventory" hidden>
       <button class="inv-slot mobile" data-slot="0" type="button" aria-label="아이템 1"></button>
       <button class="inv-slot mobile" data-slot="1" type="button" aria-label="아이템 2"></button>
+      <button class="inv-slot mobile" data-slot="2" type="button" aria-label="아이템 3"></button>
+    </div>
+    <div class="mobile-combo" id="mobileCombo" hidden>
+      🔥 <span id="mobileComboCount">1</span>
     </div>
   </div>
   <!-- Vertical timer bar pinned to the right edge of the viewport -->
@@ -45,6 +49,52 @@
           <button class="mode secondary" data-intent="join-open">코드로 입장</button>
         </div>
         <p class="helper">* 합이 10이 되도록 사과를 드래그하세요. 2분 안에 더 많이 지운 쪽 승!</p>
+        <div class="lobby-actions" style="margin-top: 12px;">
+          <button id="helpOpenBtn" class="ghost">도움말</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Help / rules -->
+    <section class="screen" id="helpScreen" hidden>
+      <h2>도움말</h2>
+
+      <div class="section">
+        <h3>기본 규칙</h3>
+        <p class="helper">10×17 보드에서 합이 10이 되는 사각형을 드래그해 사과를 지웁니다. 2분 안에 더 많이 지운 사람이 승리해요.</p>
+      </div>
+
+      <div class="section">
+        <h3>아이템전 — 콤보로 획득</h3>
+        <p class="helper">친구방 호스트가 "아이템전"을 선택하면 활성화됩니다. 아래 조건 중 하나를 충족하는 클리어가 "콤보"로 카운트되고, <strong>3콤보마다 랜덤 아이템 1개</strong>가 인벤토리에 들어옵니다.</p>
+        <ul class="help-list">
+          <li>한 번에 <strong>4개 이상</strong>의 사과를 한꺼번에 지움</li>
+          <li>또는 직전 클리어로부터 <strong>0.3초 이내</strong>에 다시 클리어</li>
+        </ul>
+        <p class="helper">조건에 맞지 않는 클리어는 콤보를 0으로 리셋합니다. 인벤토리는 <strong>최대 3개</strong>까지만 보유 가능하며 가득 차 있으면 새 아이템은 그냥 버려져요.</p>
+      </div>
+
+      <div class="section">
+        <h3>아이템 4종</h3>
+        <ul class="help-list">
+          <li><strong>🔍 힌트</strong> — 내 보드에서 합10이 되는 두 칸을 3초간 강조 (자기 강화)</li>
+          <li><strong>⚡ 2배 점수</strong> — 8초간 내가 지운 사과 점수가 ×2 (자기 강화)</li>
+          <li><strong>🙈 숫자 숨김</strong> — 상대 1명의 사과 숫자를 3초간 가림 (공격)</li>
+          <li><strong>🔀 셔플</strong> — 상대 1명의 보드 남은 사과 숫자를 무작위 재배치 (공격)</li>
+        </ul>
+        <p class="helper">공격 아이템 타겟은 자기 자신을 제외한 <strong>상위 3등 안에서 랜덤</strong>으로 정해집니다.</p>
+      </div>
+
+      <div class="section">
+        <h3>사용 방법 & 제한</h3>
+        <ul class="help-list">
+          <li>게임 화면 상단의 인벤토리 슬롯(아이콘)을 클릭/탭하면 사용</li>
+          <li>경기 종료 <strong>마지막 10초</strong>에는 공격 아이템을 쓸 수 없음 (잠금)</li>
+          <li>다시보기에서도 아이템 사용·효과가 시간 순으로 재현돼요</li>
+        </ul>
+        <div class="lobby-actions">
+          <button id="helpBackBtn" class="ghost">뒤로</button>
+        </div>
       </div>
     </section>
 
@@ -141,9 +191,14 @@
           <div id="itemToast" class="bar-toast item-toast" hidden></div>
           <div id="attackToast" class="bar-toast attack-toast" hidden></div>
         </div>
+        <div class="combo-badge" id="comboBadge" hidden>
+          <span class="combo-icon">🔥</span>
+          <span class="combo-text">콤보 <strong id="comboCount">1</strong></span>
+        </div>
         <div class="inventory" id="inventory" hidden>
           <button class="inv-slot" data-slot="0" type="button" aria-label="아이템 슬롯 1"></button>
           <button class="inv-slot" data-slot="1" type="button" aria-label="아이템 슬롯 2"></button>
+          <button class="inv-slot" data-slot="2" type="button" aria-label="아이템 슬롯 3"></button>
         </div>
         <div class="game-stat">
           <span class="muted">⏱</span>

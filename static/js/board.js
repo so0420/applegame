@@ -23,8 +23,6 @@ const ME_STROKE = "#1976d2";
 const ME_STROKE_OK = "#2e7d32";
 const OPP_BOX = "rgba(198, 40, 40, 0.18)";
 const OPP_STROKE = "#c62828";
-const GOLD = "#f6c244";
-const GOLD_DARK = "#c98a10";
 const HINT_FILL = "rgba(255, 235, 59, 0.55)";
 const HINT_STROKE = "#fbc02d";
 
@@ -43,7 +41,6 @@ export class BoardRenderer {
     this._fadingCells = []; // [{r,c,start,duration}]
     this._raf = null;
     // Item-mode state
-    this.goldenCells = new Set();   // "r,c" keys
     this.blind = false;             // hide numeric values
     this.hintCells = null;          // [[r,c], ...]
     this._shakeUntil = 0;
@@ -60,19 +57,6 @@ export class BoardRenderer {
   setBoard(board) {
     this.board = board.map((row) => row.slice());
     this.resize();
-    this.render();
-  }
-
-  setGolden(r, c, on) {
-    const key = `${r},${c}`;
-    if (on) this.goldenCells.add(key);
-    else this.goldenCells.delete(key);
-    this.render();
-  }
-
-  clearGolden() {
-    if (this.goldenCells.size === 0) return;
-    this.goldenCells.clear();
     this.render();
   }
 
@@ -98,10 +82,8 @@ export class BoardRenderer {
     for (const [r, c] of cells) {
       const v = this.board[r][c];
       if (v === 0) continue;  // already cleared (e.g. optimistic apply)
-      const isGold = this.goldenCells.has(`${r},${c}`);
-      this._fadingCells.push({ r, c, value: v, start: now, duration: 100, gold: isGold });
+      this._fadingCells.push({ r, c, value: v, start: now, duration: 100 });
       this.board[r][c] = 0;
-      this.goldenCells.delete(`${r},${c}`);
     }
     this._scheduleAnim();
   }
@@ -110,10 +92,7 @@ export class BoardRenderer {
   // arbitrary points in the timeline without queuing animations.
   applyClear(cells) {
     if (!this.board) return;
-    for (const [r, c] of cells) {
-      this.board[r][c] = 0;
-      this.goldenCells.delete(`${r},${c}`);
-    }
+    for (const [r, c] of cells) this.board[r][c] = 0;
     this.render();
   }
 
@@ -291,8 +270,7 @@ export class BoardRenderer {
           this._roundedRect(x + 2, y + 2, cs - 4, cs - 4, 4);
           ctx.fill();
         } else {
-          const gold = this.goldenCells.has(`${r},${c}`);
-          this._drawApple(x, y, cs, v, 1.0, 1.0, { gold, hideNumber: this.blind });
+          this._drawApple(x, y, cs, v, 1.0, 1.0, { hideNumber: this.blind });
         }
       }
     }
@@ -303,7 +281,7 @@ export class BoardRenderer {
       if (t >= 1) return false;
       const x = pad + f.c * cs;
       const y = pad + f.r * cs;
-      this._drawApple(x, y, cs, f.value, 1 - t, 1 + t * 0.4, { gold: f.gold, hideNumber: this.blind });
+      this._drawApple(x, y, cs, f.value, 1 - t, 1 + t * 0.4, { hideNumber: this.blind });
       return true;
     });
 
@@ -328,53 +306,30 @@ export class BoardRenderer {
     const cy = y + cs / 2;
     const margin = this.mini ? 0.5 : 2;
     const r = (cs / 2 - margin) * scale;
-    const gold = !!opts.gold;
     const hideNumber = !!opts.hideNumber;
     ctx.save();
     ctx.globalAlpha = alpha;
     if (this.mini) {
-      ctx.fillStyle = gold ? GOLD : APPLE_RED;
+      ctx.fillStyle = APPLE_RED;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
-      if (gold) {
-        ctx.strokeStyle = GOLD_DARK;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
     } else {
       const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.2, cx, cy, r);
-      if (gold) {
-        grad.addColorStop(0, "#fff7c2");
-        grad.addColorStop(0.55, GOLD);
-        grad.addColorStop(1, GOLD_DARK);
-      } else {
-        grad.addColorStop(0, APPLE_RED);
-        grad.addColorStop(1, APPLE_DARK);
-      }
+      grad.addColorStop(0, APPLE_RED);
+      grad.addColorStop(1, APPLE_DARK);
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
-      // Gold halo
-      if (gold) {
-        ctx.save();
-        ctx.globalAlpha = alpha * 0.6;
-        ctx.strokeStyle = GOLD_DARK;
-        ctx.lineWidth = Math.max(2, cs * 0.08);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.strokeStyle = gold ? "#8b6900" : "#5d4037";
+      ctx.strokeStyle = "#5d4037";
       ctx.lineWidth = Math.max(1.5, cs * 0.06);
       ctx.beginPath();
       ctx.moveTo(cx, cy - r);
       ctx.lineTo(cx + r * 0.15, cy - r - r * 0.18);
       ctx.stroke();
       if (!hideNumber) {
-        ctx.fillStyle = gold ? "#3a2a00" : TEXT_COLOR;
+        ctx.fillStyle = TEXT_COLOR;
         ctx.font = `bold ${Math.floor(cs * 0.5)}px sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";

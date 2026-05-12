@@ -9,8 +9,6 @@ from app.game.board import (
     COLS,
     ROWS,
     find_sum10_pair,
-    random_apple_cell,
-    random_empty_cell,
     shuffle_remaining,
 )
 from app.main import app
@@ -22,25 +20,6 @@ def _drain_until(ws, mtype, limit=10):
         if m["type"] == mtype:
             return m
     raise AssertionError(f"did not see {mtype}")
-
-
-def test_random_empty_cell_returns_zero_position():
-    b = [[1] * COLS for _ in range(ROWS)]
-    assert random_empty_cell(b) is None
-    b[3][7] = 0
-    assert random_empty_cell(b) == (3, 7)
-
-
-def test_random_apple_cell_skips_empty_and_excluded():
-    b = [[0] * COLS for _ in range(ROWS)]
-    assert random_apple_cell(b) is None
-    b[1][2] = 5
-    assert random_apple_cell(b) == (1, 2)
-    # Only candidate is also excluded → None
-    assert random_apple_cell(b, exclude={(1, 2)}) is None
-    b[4][6] = 7
-    cell = random_apple_cell(b, exclude={(1, 2)})
-    assert cell == (4, 6)
 
 
 def test_shuffle_remaining_keeps_zeros_and_randomises_others():
@@ -177,72 +156,185 @@ def test_attack_lockout_blocks_late_use(monkeypatch):
                 assert msg["code"] == "attack_locked"
 
 
+def _start_items_game():
+    """Bring up an items-mode friend room with two players, return ws pair
+    + ids + room. Caller is responsible for closing the WS contexts."""
+    client = TestClient(app)
+    host_ctx = client.websocket_connect("/ws")
+    host = host_ctx.__enter__()
+    host.send_json({"type": "hello", "intent": "create"})
+    host_joined = host.receive_json()
+    room_id = host_joined["room"]["id"]
+    host_id = host_joined["player_id"]
+    host.send_json({"type": "set_variant", "variant": "items"})
+    host.receive_json()  # variant_changed
+    guest_ctx = client.websocket_connect("/ws")
+    guest = guest_ctx.__enter__()
+    guest.send_json({"type": "hello", "intent": "join", "code": room_id})
+    guest_joined = guest.receive_json()
+    guest_id = guest_joined["player_id"]
+    host.receive_json()  # peer_joined
+    host.send_json({"type": "start"})
+    host.receive_json()
+    guest.receive_json()
+
+    from app.main import manager
+    room = manager.get(room_id)
+    return host_ctx, guest_ctx, host, guest, host_id, guest_id, room
+
+
+def test_combo_big_clear_increments():
+    """A single clear of ≥4 cells (no prior clear) counts as combo step 1."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # Plant a 5×1 rectangle of 2s on row 0 → sums to 10, clears 5 cells.
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        for c in range(5):
+            room.boards[host_id][0][c] = 2
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 4})
+        msg = _drain_until(host, "clear")
+        assert len(msg["cells"]) == 5
+        assert msg["combo"] == 1
+        assert room.players[host_id].combo_count == 1
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_combo_window_does_not_count_first_small_clear():
+    """A first clear of <4 cells without prior history must NOT count
+    as a combo (no preceding clear to be 'within window' of)."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # 5+5 = 10 across 2 cells.
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        msg = _drain_until(host, "clear")
+        assert msg["combo"] == 0
+        assert room.players[host_id].combo_count == 0
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_combo_window_counts_small_clears_within_03s():
+    """A small clear that lands within 0.3s of the previous one counts."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # Fake a "just happened" prior clear so the in-window branch fires.
+        room.players[host_id].last_score_ts = time.time()
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        msg = _drain_until(host, "clear")
+        assert msg["combo"] == 1
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_combo_breaks_after_window_with_small_clear():
+    """Slow + small clear breaks the streak back to 0."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # Pretend the player was mid-streak but the last clear was a while ago.
+        room.players[host_id].combo_count = 2
+        room.players[host_id].last_score_ts = time.time() - 1.0  # > 0.3s
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        msg = _drain_until(host, "clear")
+        assert msg["combo"] == 0
+        assert room.players[host_id].combo_count == 0
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_third_combo_grants_item_and_resets():
+    """Reaching the 3rd combo step grants an item to a free slot and
+    resets the streak to 0."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        host_player = room.players[host_id]
+        host_player.combo_count = 2          # already 2 streaks deep
+        host_player.last_score_ts = time.time()  # next clear lands in window
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        clear = _drain_until(host, "clear")
+        assert clear["combo"] == 0           # reset after the drop
+        assert host_player.combo_count == 0
+        # item_acquired follows on the same socket
+        acq = _drain_until(host, "item_acquired")
+        assert acq["slot"] in (0, 1, 2)
+        assert acq["item"] in ("hint", "double", "blind", "shuffle")
+        assert host_player.inventory[acq["slot"]] == acq["item"]
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_combo_full_inventory_discards_item_but_still_resets():
+    """If the inventory is full when a combo lands, the item is silently
+    discarded — the streak still resets so the player doesn't sit at
+    THRESHOLD forever."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        host_player = room.players[host_id]
+        host_player.combo_count = 2
+        host_player.last_score_ts = time.time()
+        host_player.inventory = ["hint", "double", "blind"]  # full
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        clear = _drain_until(host, "clear")
+        assert clear["combo"] == 0
+        assert host_player.combo_count == 0
+        assert host_player.inventory == ["hint", "double", "blind"]
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
 def test_events_recorded_for_replay():
     """Every item-mode side-effect must append a kind-tagged event to
     room.events so the post-game replay can reconstruct the round."""
-    client = TestClient(app)
-    with client.websocket_connect("/ws") as host:
-        host.send_json({"type": "hello", "intent": "create"})
-        host_joined = host.receive_json()
-        room_id = host_joined["room"]["id"]
-        host_id = host_joined["player_id"]
-        host.send_json({"type": "set_variant", "variant": "items"})
-        host.receive_json()
-        with client.websocket_connect("/ws") as guest:
-            guest.send_json({"type": "hello", "intent": "join", "code": room_id})
-            guest_joined = guest.receive_json()
-            guest_id = guest_joined["player_id"]
-            host.receive_json()  # peer_joined
-            host.send_json({"type": "start"})
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # 1) Use a self-effect item (double) by hand
+        host_player = room.players[host_id]
+        host_player.inventory[0] = "double"
+        host.send_json({"type": "use_item", "slot": 0})
+        for _ in range(2):  # item_used + effect_start
             host.receive_json()
             guest.receive_json()
 
-            from app.main import manager
-            room = manager.get(room_id)
-            assert room is not None
+        # 2) Use shuffle (attack on guest)
+        host_player.inventory[0] = "shuffle"
+        host.send_json({"type": "use_item", "slot": 0})
+        for _ in range(2):  # item_used + board_update
+            host.receive_json()
+            guest.receive_json()
 
-            # 1) Manually trigger a golden spawn (skip the 25s wait)
-            from app.ws.handlers import _t_ms
-            from app.game.board import random_apple_cell
-            board = room.boards[host_id]
-            cell = random_apple_cell(board)
-            assert cell is not None
-            room.golden[host_id].add(cell)
-            room.events.append({
-                "kind": "golden", "t_ms": _t_ms(room),
-                "player_id": host_id, "r": cell[0], "c": cell[1],
-            })
-
-            # 2) Use a self-effect item (double)
-            host_player = room.players[host_id]
-            host_player.inventory[0] = "double"
-            host.send_json({"type": "use_item", "slot": 0})
-            # Drain item_used + effect_start from both sockets so the
-            # next phase doesn't get confused.
-            for _ in range(2):
-                host.receive_json()
-                guest.receive_json()
-
-            # 3) Use shuffle (attack on guest)
-            host_player.inventory[0] = "shuffle"
-            host.send_json({"type": "use_item", "slot": 0})
-            for _ in range(2):  # item_used + board_update
-                host.receive_json()
-                guest.receive_json()
-
-            kinds = [e.get("kind") for e in room.events]
-            assert "golden" in kinds
-            assert "item_used" in kinds
-            assert "effect_start" in kinds
-            assert "shuffle" in kinds
-
-            # Every event carries t_ms
-            assert all(isinstance(e.get("t_ms"), int) for e in room.events)
-            # Item events should reference a known player or target
-            for e in room.events:
-                if e["kind"] == "item_used":
-                    assert e["by"] == host_id
-                    assert e["target_id"] in (host_id, guest_id)
+        kinds = [e.get("kind") for e in room.events]
+        assert "item_used" in kinds
+        assert "effect_start" in kinds
+        assert "shuffle" in kinds
+        assert all(isinstance(e.get("t_ms"), int) for e in room.events)
+        for e in room.events:
+            if e["kind"] == "item_used":
+                assert e["by"] == host_id
+                assert e["target_id"] in (host_id, guest_id)
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
 
 
 def test_use_item_double_grants_score_multiplier(monkeypatch):

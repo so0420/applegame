@@ -12,7 +12,6 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .. import schemas as S
 from ..game.board import (
     find_sum10_pair,
-    random_apple_cell,
     shuffle_remaining,
     validate_and_clear,
 )
@@ -21,11 +20,13 @@ from ..game.room import (
     CAPACITY_DEFAULT,
     CAPACITY_MAX,
     CAPACITY_MIN,
+    COMBO_BIG_CELLS,
+    COMBO_THRESHOLD,
+    COMBO_WINDOW_S,
     EFFECT_BLIND,
     EFFECT_DOUBLE,
     EFFECT_HINT,
     GAME_DURATION,
-    GOLDEN_INTERVAL,
     INVENTORY_SIZE,
     ITEM_KINDS,
     Player,
@@ -299,16 +300,13 @@ async def _start_game(room: Room) -> None:
 
     room.timer_task = asyncio.create_task(end_after_timeout())
 
-    if variant == "items":
-        room.golden_task = asyncio.create_task(_golden_spawn_loop(room))
-
 
 async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> None:
     r1, c1, r2, c2 = data.get("r1"), data.get("c1"), data.get("r2"), data.get("c2")
     if None in (r1, c1, r2, c2):
         return
     item_msg: dict[str, Any] | None = None
-    gold_hit = False
+    combo_after = 0
     async with room.lock:
         if room.state != "playing":
             return
@@ -320,6 +318,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             await send(player, S.msg(S.REJECT, reason="invalid_or_taken"))
             return
         now = time.time()
+        prev_clear_ts = player.last_score_ts
         gained = len(cells)
         # 2× multiplier — applied if the effect is still active. Bonus is
         # tracked as added apples-equivalent so the existing scoring model
@@ -340,27 +339,37 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             "cells": cells,
         })
 
-        # Golden-apple pickup → grant a random item if there's a free slot.
+        # Combo bookkeeping → grant a random item every COMBO_THRESHOLD steps.
         if room.variant == "items":
-            golden_cells = room.golden.get(player.id) or set()
-            consumed = [cell for cell in cells if tuple(cell) in golden_cells]
-            if consumed:
-                gold_hit = True
-                for cell in consumed:
-                    golden_cells.discard(tuple(cell))
-                free_slot = next(
-                    (i for i, s in enumerate(player.inventory) if s is None),
-                    None,
-                )
-                if free_slot is not None:
-                    item = random.choice(ITEM_KINDS)
-                    player.inventory[free_slot] = item
-                    item_msg = S.msg(
-                        S.ITEM_ACQUIRED,
-                        player_id=player.id,
-                        slot=free_slot,
-                        item=item,
+            is_big = len(cells) >= COMBO_BIG_CELLS
+            in_window = (
+                prev_clear_ts > 0.0
+                and (now - prev_clear_ts) <= COMBO_WINDOW_S
+            )
+            if is_big or in_window:
+                player.combo_count += 1
+                if player.combo_count >= COMBO_THRESHOLD:
+                    free_slot = next(
+                        (i for i, s in enumerate(player.inventory) if s is None),
+                        None,
                     )
+                    if free_slot is not None:
+                        item = random.choice(ITEM_KINDS)
+                        player.inventory[free_slot] = item
+                        item_msg = S.msg(
+                            S.ITEM_ACQUIRED,
+                            player_id=player.id,
+                            slot=free_slot,
+                            item=item,
+                            t_ms=t_ms,
+                        )
+                    # Reset whether or not we could store the item — players
+                    # without a free slot still "spend" the streak rather
+                    # than have it sit at THRESHOLD indefinitely.
+                    player.combo_count = 0
+            else:
+                player.combo_count = 0
+            combo_after = player.combo_count
 
     await broadcast(
         room,
@@ -370,49 +379,13 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             cells=cells,
             scores=scores,
             t_ms=t_ms,
-            gold_hit=gold_hit,
+            combo=combo_after,
         ),
     )
     if item_msg is not None:
         # Only the receiving player needs to know which item dropped —
         # opponents only see the inventory count update via room state.
         await send(player, item_msg)
-
-
-async def _golden_spawn_loop(room: Room) -> None:
-    """Periodically mark an existing apple on each player's board as golden."""
-    try:
-        while True:
-            await asyncio.sleep(GOLDEN_INTERVAL)
-            spawns: list[tuple[str, int, int, int]] = []
-            async with room.lock:
-                if room.state != "playing":
-                    return
-                t_ms = _t_ms(room)
-                for pid, board in room.boards.items():
-                    existing = room.golden.setdefault(pid, set())
-                    # Promote an already-on-board apple to golden so the
-                    # client doesn't need to learn a new cell value — the
-                    # apple value it's drawing stays the same.
-                    cell = random_apple_cell(board, exclude=existing)
-                    if cell is None:
-                        continue
-                    existing.add(cell)
-                    spawns.append((pid, cell[0], cell[1], t_ms))
-                    room.events.append({
-                        "kind": "golden",
-                        "t_ms": t_ms,
-                        "player_id": pid,
-                        "r": cell[0],
-                        "c": cell[1],
-                    })
-            for pid, r, c, t_ms in spawns:
-                await broadcast(
-                    room,
-                    S.msg(S.GOLDEN_SPAWN, player_id=pid, r=r, c=c, t_ms=t_ms),
-                )
-    except asyncio.CancelledError:
-        pass
 
 
 def _pick_attack_target(room: Room, attacker_id: str) -> str | None:
@@ -479,10 +452,6 @@ async def _handle_use_item(
             if target_board is None:
                 return
             shuffle_remaining(target_board)
-            # Shuffle invalidates the previous golden positions (values
-            # were rerolled), so the gold flag stays at those cells but
-            # the apple beneath is now random — that's fine; picking it
-            # up still grants an item.
             until = now  # one-shot effect
         else:
             return
@@ -586,8 +555,6 @@ async def _end_game(room: Room) -> None:
         room.state = "finished"
         timer = room.timer_task
         room.timer_task = None
-        golden = room.golden_task
-        room.golden_task = None
         room.winner_id = room.determine_winner()
         scores = {p.id: p.score for p in room.players.values()}
     # Cancel the timeout task only if we're ending early (not from inside it).
@@ -595,8 +562,6 @@ async def _end_game(room: Room) -> None:
     current = asyncio.current_task()
     if timer is not None and timer is not current and not timer.done():
         timer.cancel()
-    if golden is not None and not golden.done():
-        golden.cancel()
     await broadcast(
         room,
         S.msg(S.GAME_END, scores=scores, winner_id=room.winner_id),

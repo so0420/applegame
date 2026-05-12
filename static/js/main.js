@@ -7,6 +7,7 @@ const GAME_DURATION_MS = 120 * 1000;
 
 const screens = {
   home: $("home"),
+  helpScreen: $("helpScreen"),
   joinScreen: $("joinScreen"),
   lobby: $("lobby"),
   game: $("game"),
@@ -55,9 +56,10 @@ const state = {
   matchDeadlineMs: null,
   matchTickerId: null,
   // Item-mode local state
-  inventory: [null, null],
+  inventory: [null, null, null],
   effects: { double: 0, blind: 0, hint: 0 },  // expiry ms
   effectTimers: {},
+  combo: 0,
 };
 
 const ITEM_META = {
@@ -203,6 +205,10 @@ document.querySelectorAll(".mode").forEach((btn) => {
     await startSession(intent);
   });
 });
+
+// ---- Help screen ----
+$("helpOpenBtn")?.addEventListener("click", () => show("helpScreen"));
+$("helpBackBtn")?.addEventListener("click", () => show("home"));
 
 // Resize all renderers when device orientation changes (rotate-hint → game)
 window.matchMedia("(orientation: portrait)").addEventListener("change", () => {
@@ -397,7 +403,7 @@ function resetState() {
   state.gameWinnerId = null;
   state.matchDeadlineMs = null;
   state.variant = "classic";
-  state.inventory = [null, null];
+  state.inventory = [null, null, null];
   state.effects = { double: 0, blind: 0, hint: 0 };
   $("inventory").hidden = true;
   $("mobileInventory").hidden = true;
@@ -488,16 +494,6 @@ function bindSocket(ws) {
     state.variant = e.detail.variant || "classic";
     if (state.room) state.room.variant = state.variant;
     renderLobby();
-  });
-
-  ws.addEventListener("msg:golden_spawn", (e) => {
-    const { player_id, r, c, t_ms } = e.detail;
-    state.events.push({ kind: "golden", t_ms: t_ms ?? 0, player_id, r, c });
-    const mini = state.miniRenderers.get(player_id);
-    mini?.setGolden(r, c, true);
-    if (player_id === state.focusedPlayerId) {
-      state.bigRenderer.setGolden(r, c, true);
-    }
   });
 
   ws.addEventListener("msg:item_acquired", (e) => {
@@ -619,8 +615,11 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:clear", (e) => {
-    const { cells, scores, player_id, t_ms } = e.detail;
+    const { cells, scores, player_id, t_ms, combo } = e.detail;
     state.events.push({ kind: "clear", t_ms: t_ms ?? 0, player_id, cells });
+    if (player_id === state.playerId && state.variant === "items") {
+      setCombo(combo ?? 0);
+    }
     if (player_id === state.playerId) {
       // Server confirmation of my own submit. Pop the matching pending
       // entry; only re-apply if it wasn't done optimistically already.
@@ -694,8 +693,9 @@ function onReconnected(m) {
     state.myName = me.nickname;
     nickInput.value = me.nickname;
     state.inventory = Array.isArray(me.inventory)
-      ? [me.inventory[0] ?? null, me.inventory[1] ?? null]
-      : [null, null];
+      ? [me.inventory[0] ?? null, me.inventory[1] ?? null, me.inventory[2] ?? null]
+      : [null, null, null];
+    setCombo(typeof me.combo === "number" ? me.combo : 0);
   }
   renderInventory();
 
@@ -882,24 +882,38 @@ function applyShuffle(target_id, board, animate) {
       setTimeout(() => hideBoardEffect("shuffle"), 600);
     }
   }
-  // Re-apply golden flags that survive shuffle: server keeps the gold set
-  // on the same (r,c) positions. We re-derive from any golden events that
-  // landed before the next shuffle by reading the renderer's existing set
-  // (which is already what we want — shuffle replaces values, not flags).
 }
 
 function clearAllEffectVisuals() {
   state.bigRenderer.setBlind(false);
   state.bigRenderer.setHint(null);
-  state.bigRenderer.clearGolden();
   for (const r of state.miniRenderers.values()) {
     r.setBlind(false);
     r.setHint(null);
-    r.clearGolden();
   }
   hideBoardEffect("double");
   hideBoardEffect("blind");
   hideBoardEffect("shuffle");
+  setCombo(0);
+}
+
+function setCombo(n) {
+  state.combo = n;
+  const badge = $("comboBadge");
+  const mob = $("mobileCombo");
+  if (n > 0) {
+    $("comboCount").textContent = String(n);
+    $("mobileComboCount").textContent = String(n);
+    badge.hidden = false;
+    mob.hidden = false;
+    // brief pulse on each step
+    badge.classList.remove("pulse");
+    void badge.offsetWidth;
+    badge.classList.add("pulse");
+  } else {
+    badge.hidden = true;
+    mob.hidden = true;
+  }
 }
 
 // ---- Game lifecycle ----
@@ -908,7 +922,7 @@ function onGameStart(m) {
   state.startedAt = state.endsAt - GAME_DURATION_MS;
   state.events = [];
   state.variant = m.variant || state.variant || "classic";
-  state.inventory = [null, null];
+  state.inventory = [null, null, null];
   state.effects = { double: 0, blind: 0, hint: 0 };
   renderInventory();
   // Match countdown done — clear it
@@ -929,9 +943,9 @@ function onGameStart(m) {
 
   state.bigRenderer.setBoard(m.board);
   state.bigRenderer.setMyDrag(null);
-  state.bigRenderer.clearGolden();
   state.bigRenderer.setBlind(false);
   state.bigRenderer.setHint(null);
+  setCombo(0);
 
   buildLeaderboard();
   // Default focus = me
@@ -1361,12 +1375,6 @@ function applyReplayEventsBetween(fromMs, toMs, animate) {
       // count keeps the replay's leaderboard easy to read.
       state.replayCumScores[ev.player_id] =
         (state.replayCumScores[ev.player_id] || 0) + ev.cells.length;
-    } else if (kind === "golden") {
-      const mini = state.miniRenderers.get(ev.player_id);
-      mini?.setGolden(ev.r, ev.c, true);
-      if (ev.player_id === state.focusedPlayerId) {
-        state.bigRenderer.setGolden(ev.r, ev.c, true);
-      }
     } else if (kind === "shuffle") {
       applyShuffle(ev.target_id, ev.board, animate);
     } else if (kind === "effect_start") {
@@ -1385,8 +1393,8 @@ function replaySeekTo(targetMs) {
   if (targetMs >= state.replayTime) {
     applyReplayEventsBetween(state.replayTime, targetMs, /*animate*/ false);
   } else {
-    // Backward: rebuild from initial. Wipe goldens / effect overlays so
-    // events 0..target re-apply them; otherwise stale flags linger.
+    // Backward: rebuild from initial. Wipe effect overlays / combo so
+    // events 0..target re-apply them; otherwise stale state lingers.
     state.bigRenderer.setBoard(state.initialBoard);
     for (const r of state.miniRenderers.values()) r.setBoard(state.initialBoard);
     clearAllEffectVisuals();

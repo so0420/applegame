@@ -31,19 +31,18 @@ MATCH_COUNTDOWN_CANCEL = "match_countdown_cancel"  # countdown aborted
 ROOM_FULL = "room_full"       # {}
 NOT_FOUND = "not_found"       # {}
 QUEUED = "queued"             # {position}
-GAME_START = "game_start"     # {board, ends_at, variant, golden?}
+GAME_START = "game_start"     # {board, ends_at, variant}
 PEER_DRAG = "peer_drag"       # {player_id, r1,c1,r2,c2}
-CLEAR = "clear"               # {player_id, cells, scores, gold_hit?}
+CLEAR = "clear"               # {player_id, cells, scores, t_ms, combo?}
 REJECT = "reject"             # {reason}
 GAME_END = "game_end"         # {scores, winner_id}
 ERROR = "error"               # {code, message}
 # Item-mode messages
-GOLDEN_SPAWN = "golden_spawn"     # {player_id, r, c}
-ITEM_ACQUIRED = "item_acquired"   # {player_id, slot, item}
-ITEM_USED = "item_used"           # {by, item, target_id?}
-EFFECT_START = "effect_start"     # {target_id, effect, until_ms, hint?: [{r,c}, ...]}
-EFFECT_END = "effect_end"         # {target_id, effect}
-BOARD_UPDATE = "board_update"     # {target_id, board} — after shuffle
+ITEM_ACQUIRED = "item_acquired"   # {player_id, slot, item, t_ms}
+ITEM_USED = "item_used"           # {by, item, target_id?, t_ms}
+EFFECT_START = "effect_start"     # {target_id, effect, until_ms, hint?, t_ms}
+EFFECT_END = "effect_end"         # {target_id, effect, t_ms}
+BOARD_UPDATE = "board_update"     # {target_id, board, t_ms} — after shuffle
 
 
 def msg(type_: str, **payload: Any) -> dict[str, Any]:

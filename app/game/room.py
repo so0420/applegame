@@ -13,13 +13,19 @@ from .board import generate_board, ROWS, COLS, TOTAL
 GAME_DURATION = 120.0  # seconds
 
 # Item-mode constants
-INVENTORY_SIZE = 2
-GOLDEN_INTERVAL = 25.0          # seconds between golden-apple spawns per player
+INVENTORY_SIZE = 3
 ATTACK_LOCKOUT = 10.0           # seconds before game end where attacks are blocked
 EFFECT_DOUBLE = 8.0             # 2× score duration
 EFFECT_BLIND = 3.0              # number-hide duration
 EFFECT_HINT = 3.0               # hint highlight duration
 ITEM_KINDS = ("hint", "double", "blind", "shuffle")
+# Combo-based item drop. A clear counts as a combo step if it clears
+# COMBO_BIG_CELLS+ cells in one shot OR lands within COMBO_WINDOW_S of
+# the previous clear. Every COMBO_THRESHOLD steps drops an item and
+# resets the counter; any non-qualifying clear breaks the streak.
+COMBO_THRESHOLD = 3
+COMBO_WINDOW_S = 0.3
+COMBO_BIG_CELLS = 4
 
 
 @dataclass
@@ -37,6 +43,7 @@ class Player:
     )
     double_until: float = 0.0       # score-multiplier deadline (epoch s)
     blind_until: float = 0.0        # number-hide deadline imposed on me
+    combo_count: int = 0            # current combo streak (resets on miss or drop)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -45,6 +52,7 @@ class Player:
             "score": self.score,
             "connected": self.connected,
             "inventory": list(self.inventory),
+            "combo": self.combo_count,
         }
 
 
@@ -78,9 +86,6 @@ class Room:
     cleanup_task: asyncio.Task | None = None
     # Item-mode state
     variant: RoomVariant = "classic"
-    # Per-player set of (r, c) cells currently marked as golden apples.
-    golden: dict[str, set[tuple[int, int]]] = field(default_factory=dict)
-    golden_task: asyncio.Task | None = None
 
     @property
     def is_full(self) -> bool:
@@ -111,6 +116,7 @@ class Room:
             p.inventory = [None] * INVENTORY_SIZE
             p.double_until = 0.0
             p.blind_until = 0.0
+            p.combo_count = 0
 
     def start(self) -> None:
         self._init_boards()
@@ -123,6 +129,7 @@ class Room:
             p.inventory = [None] * INVENTORY_SIZE
             p.double_until = 0.0
             p.blind_until = 0.0
+            p.combo_count = 0
 
     def _init_boards(self) -> None:
         """Generate one master board, deep-copy per player."""
@@ -130,7 +137,6 @@ class Room:
         self.initial_board = [row[:] for row in master]
         self.boards = {pid: [row[:] for row in master] for pid in self.players}
         self.apples_left = {pid: TOTAL for pid in self.players}
-        self.golden = {pid: set() for pid in self.players}
         self.events = []
 
     def determine_winner(self) -> str | None:
