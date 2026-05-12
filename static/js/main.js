@@ -939,16 +939,17 @@ function setCombo(n, triggered = false) {
   state.combo = n;
   const badge = $("comboBadge");
   const mob = $("mobileCombo");
-  const badgeDefault = badge.querySelector(".combo-default");
+  const icon = badge.querySelector(".combo-icon");
+  const text = badge.querySelector(".combo-text");
   const badgeTrigger = badge.querySelector(".combo-trigger-msg");
-  const mobDefault = mob.querySelector(".combo-default");
-  const mobTrigger = mob.querySelector(".combo-trigger-msg");
+  const mobDefault = mob.querySelector(".mobile-combo-default");
+  const mobTrigger = mob.querySelector(".mobile-combo-trigger");
   clearTimeout(state._comboMessageTimer);
 
   if (triggered) {
-    // Swap the badge's inner content to the drop notice for 2s, then
-    // fall back to the normal combo display.
-    badgeDefault.hidden = true;
+    // In-place swap: hide the normal icon+text, show the trigger pill.
+    icon.hidden = true;
+    text.hidden = true;
     badgeTrigger.hidden = false;
     mobDefault.hidden = true;
     mobTrigger.hidden = false;
@@ -961,19 +962,22 @@ function setCombo(n, triggered = false) {
     state._comboMessageTimer = setTimeout(() => {
       badge.classList.remove("triggered");
       badgeTrigger.hidden = true;
-      badgeDefault.hidden = false;
+      icon.hidden = false;
+      text.hidden = false;
       mobTrigger.hidden = true;
       mobDefault.hidden = false;
-      // Re-render normally so visibility tracks current state.combo
-      setCombo(state.combo, false);
+      // Combo is 0 post-trigger; hide until next chain.
+      badge.hidden = true;
+      mob.hidden = true;
     }, 2000);
     return;
   }
 
-  // Normal path
+  // Normal path — mirrors 077014c except for the sibling reset.
   badge.classList.remove("triggered");
   badgeTrigger.hidden = true;
-  badgeDefault.hidden = false;
+  icon.hidden = false;
+  text.hidden = false;
   mobTrigger.hidden = true;
   mobDefault.hidden = false;
   if (n > 0) {
