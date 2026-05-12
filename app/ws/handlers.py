@@ -24,7 +24,7 @@ from ..game.room import (
     COMBO_THRESHOLD,
     COMBO_WINDOW_S,
     EFFECT_BLIND,
-    EFFECT_DOUBLE,
+    EFFECT_BONUS,
     EFFECT_HINT,
     GAME_DURATION,
     INVENTORY_SIZE,
@@ -401,15 +401,13 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         player.submit_history.append(now)
         prev_clear_ts = player.last_score_ts
         gained = len(cells)
-        # 2× multiplier — applied if the effect is still active. Bonus is
-        # tracked as added apples-equivalent so the existing scoring model
-        # (score == apples-cleared count in classic mode) stays unified.
-        if room.variant == "items" and player.double_until > now:
-            gained *= 2
+        # Bonus item: +1 point per successful submit while active. The
+        # underlying apples_left still tracks raw cells removed, but the
+        # display score gets the extra point on top of the cleared count.
+        if room.variant == "items" and player.bonus_until > now:
+            gained += 1
         player.score += gained
         player.last_score_ts = now
-        # apples_left tracks raw cells removed (used elsewhere as physical
-        # progress), so subtract the raw count, not the doubled score.
         room.apples_left[player.id] -= len(cells)
         scores = {p.id: p.score for p in room.players.values()}
         t_ms = int((now - room.started_at) * 1000) if room.started_at else 0
@@ -528,10 +526,10 @@ async def _handle_use_item(
             payload["hint"] = [{"r": r, "c": c} for (r, c) in (pair or [])]
             target_id = player.id
             until = now + EFFECT_HINT
-        elif item == "double":
+        elif item == "bonus":
             target_id = player.id
-            player.double_until = now + EFFECT_DOUBLE
-            until = player.double_until
+            player.bonus_until = now + EFFECT_BONUS
+            until = player.bonus_until
         elif item == "blind":
             target_id = _pick_attack_target(room, player.id)
             if target_id is None:

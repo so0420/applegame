@@ -57,7 +57,7 @@ const state = {
   matchTickerId: null,
   // Item-mode local state
   inventory: [null, null, null],
-  effects: { double: 0, blind: 0, hint: 0 },  // expiry ms
+  effects: { bonus: 0, blind: 0, hint: 0 },  // expiry ms
   effectTimers: {},
   initialGolden: [],   // [[r,c], ...] picked at game start
   combo: 0,
@@ -65,7 +65,7 @@ const state = {
 
 const ITEM_META = {
   hint:    { icon: "🔍", label: "힌트",  attack: false, desc: "내 보드에 합10 쌍 강조 (3초)" },
-  double:  { icon: "⚡", label: "2배 점수", attack: false, desc: "내 점수 8초간 2배" },
+  bonus:   { icon: "➕", label: "추가 점수", attack: false, desc: "8초간 클리어할 때마다 점수 +1" },
   blind:   { icon: "🙈", label: "숫자 숨김", attack: true, desc: "상대 1명 숫자 3초 가림" },
   shuffle: { icon: "🔀", label: "셔플", attack: true, desc: "상대 1명 보드 재배치" },
 };
@@ -427,7 +427,7 @@ function resetState() {
   state.matchDeadlineMs = null;
   state.variant = "classic";
   state.inventory = [null, null, null];
-  state.effects = { double: 0, blind: 0, hint: 0 };
+  state.effects = { bonus: 0, blind: 0, hint: 0 };
   state.initialGolden = [];
   $("inventory").hidden = true;
   $("mobileInventory").hidden = true;
@@ -831,7 +831,7 @@ function showBoardEffect(kind, durationMs) {
   if (!el) {
     el = document.createElement("div");
     el.className = `board-effect-overlay ${kind}`;
-    const labels = { double: "×2 SCORE", blind: "🙈 숫자 숨김", shuffle: "🔀 SHUFFLE" };
+    const labels = { bonus: "+1 SCORE", blind: "🙈 숫자 숨김", shuffle: "🔀 SHUFFLE" };
     el.textContent = labels[kind] || "";
     document.querySelector(".board-area").appendChild(el);
   }
@@ -866,9 +866,9 @@ function showItemUsedToast(by, item, target_id) {
 function applyEffectStart(target_id, effect, until_ms, hint) {
   const remainingMs = (until_ms ?? Date.now()) - Date.now();
   if (target_id === state.playerId) {
-    if (effect === "double") {
-      state.effects.double = until_ms;
-      showBoardEffect("double", remainingMs);
+    if (effect === "bonus") {
+      state.effects.bonus = until_ms;
+      showBoardEffect("bonus", remainingMs);
     } else if (effect === "blind") {
       state.effects.blind = until_ms;
       state.bigRenderer.setBlind(true);
@@ -887,9 +887,9 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
 }
 
 function applyEffectEnd(target_id, effect) {
-  if (effect === "double" && target_id === state.playerId) {
-    state.effects.double = 0;
-    hideBoardEffect("double");
+  if (effect === "bonus" && target_id === state.playerId) {
+    state.effects.bonus = 0;
+    hideBoardEffect("bonus");
   } else if (effect === "blind") {
     if (target_id === state.playerId) state.effects.blind = 0;
     const mini = state.miniRenderers.get(target_id);
@@ -929,7 +929,7 @@ function clearAllEffectVisuals() {
     r.setHint(null);
     r.clearGolden();
   }
-  hideBoardEffect("double");
+  hideBoardEffect("bonus");
   hideBoardEffect("blind");
   hideBoardEffect("shuffle");
   setCombo(0);
@@ -1013,7 +1013,7 @@ function onGameStart(m) {
   state.events = [];
   state.variant = m.variant || state.variant || "classic";
   state.inventory = [null, null, null];
-  state.effects = { double: 0, blind: 0, hint: 0 };
+  state.effects = { bonus: 0, blind: 0, hint: 0 };
   renderInventory();
   // Match countdown done — clear it
   state.matchDeadlineMs = null;
@@ -1491,8 +1491,8 @@ function applyReplayEventsBetween(fromMs, toMs, animate) {
         mini?.applyClear(ev.cells);
         if (isFocused) state.bigRenderer.applyClear(ev.cells);
       }
-      // Replay scoring uses raw cell count — 2× double_score is a live-only
-      // bonus that's hard to reconstruct accurately, and showing the raw
+      // Replay scoring uses raw cell count — the bonus +1 is a live-only
+      // perk that's hard to reconstruct accurately, and showing the raw
       // count keeps the replay's leaderboard easy to read.
       state.replayCumScores[ev.player_id] =
         (state.replayCumScores[ev.player_id] || 0) + ev.cells.length;

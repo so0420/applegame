@@ -17,10 +17,10 @@ GAME_DURATION = 120.0  # seconds
 # Item-mode constants
 INVENTORY_SIZE = 3
 ATTACK_LOCKOUT = 10.0           # seconds before game end where attacks are blocked
-EFFECT_DOUBLE = 8.0             # 2× score duration
+EFFECT_BONUS = 8.0              # +1-per-clear bonus duration
 EFFECT_BLIND = 3.0              # number-hide duration
 EFFECT_HINT = 3.0               # hint highlight duration
-ITEM_KINDS = ("hint", "double", "blind", "shuffle")
+ITEM_KINDS = ("hint", "bonus", "blind", "shuffle")
 # Golden apples: a fixed number of apples are marked golden at game
 # start (same positions for every player). Clearing one grants a
 # random item into a free inventory slot; no respawn over time.
@@ -32,12 +32,12 @@ COMBO_THRESHOLD = 5
 COMBO_WINDOW_S = 2.0
 BIG_CLEAR_CELLS = 4
 # Anti-macro: every successful SUBMIT must satisfy all three.
-# Tuned so a fast-but-human pace passes while the typical bot
-# (back-to-back synthetic events, no real drag) gets rejected.
-MIN_SUBMIT_GAP_S = 0.08         # ~12.5 clears/s ceiling
-MAX_SUBMITS_PER_1S = 8          # sustained 1s window
-MAX_SUBMITS_PER_3S = 20         # sustained 3s window
-MIN_DRAG_DURATION_S = 0.04      # 40ms — almost instantaneous drag = bot
+# Tuned so even a fast human pace passes; only network-grade speeds
+# (bot bursts, no real pointer drag) get rejected.
+MIN_SUBMIT_GAP_S = 0.05         # 50ms — 20 clears/s instantaneous ceiling
+MAX_SUBMITS_PER_1S = 4          # ≥4 valid clears in 1s = reject 5th+
+MAX_SUBMITS_PER_3S = 12         # 3× of the per-second cap
+MIN_DRAG_DURATION_S = 0.015     # 15ms — only catches sub-network-RTT drags
 MAX_DRAG_UPDATES_PER_S = 30     # drop excess drag broadcasts silently
 
 
@@ -54,7 +54,7 @@ class Player:
     inventory: list[str | None] = field(
         default_factory=lambda: [None] * INVENTORY_SIZE
     )
-    double_until: float = 0.0       # score-multiplier deadline (epoch s)
+    bonus_until: float = 0.0        # +1-per-clear deadline (epoch s)
     blind_until: float = 0.0        # number-hide deadline imposed on me
     combo_count: int = 0            # consecutive-clear streak (within window)
     # Anti-macro state (server-side; not exposed to the client)
@@ -137,7 +137,7 @@ class Room:
             p.last_drag = None
             p.last_score_ts = 0.0
             p.inventory = [None] * INVENTORY_SIZE
-            p.double_until = 0.0
+            p.bonus_until = 0.0
             p.blind_until = 0.0
             p.combo_count = 0
             p.submit_history.clear()
@@ -154,7 +154,7 @@ class Room:
             p.score = 0
             p.last_score_ts = 0.0
             p.inventory = [None] * INVENTORY_SIZE
-            p.double_until = 0.0
+            p.bonus_until = 0.0
             p.blind_until = 0.0
             p.combo_count = 0
             p.submit_history.clear()

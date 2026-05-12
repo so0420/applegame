@@ -108,8 +108,8 @@ def test_rapid_submit_burst_is_rate_limited():
         import time as _t
         now = _t.time()
         # Fill the 1s window with MAX_SUBMITS_PER_1S timestamps
-        for i in range(8):
-            room.players[pid].submit_history.append(now - 0.01 * i)
+        for i in range(4):
+            room.players[pid].submit_history.append(now - 0.05 - 0.02 * i)
         room.boards[pid] = [[1] * COLS for _ in range(ROWS)]
         room.boards[pid][0][0] = 5
         room.boards[pid][0][1] = 5
@@ -383,7 +383,7 @@ def test_clearing_golden_grants_item_and_shrinks_set():
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         _drain_until(host, "clear")
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "double", "blind", "shuffle")
+        assert acq["item"] in ("hint", "bonus", "blind", "shuffle")
         # The (0,0) golden has been consumed
         assert (0, 0) not in room.golden[host_id]
         # And actually stored in inventory
@@ -409,7 +409,7 @@ def test_big_clear_grants_item_instantly():
         clear = _drain_until(host, "clear")
         assert len(clear["cells"]) == 5
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "double", "blind", "shuffle")
+        assert acq["item"] in ("hint", "bonus", "blind", "shuffle")
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)
@@ -436,7 +436,7 @@ def test_combo_threshold_clears_grant_item():
         assert clear["combo"] == 0       # reset right after the drop
         assert clear["combo_triggered"] is True
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "double", "blind", "shuffle")
+        assert acq["item"] in ("hint", "bonus", "blind", "shuffle")
         assert room.players[host_id].combo_count == 0
     finally:
         h_ctx.__exit__(None, None, None)
@@ -531,7 +531,7 @@ def test_simultaneous_triggers_grant_only_one_item():
         assert clear["combo"] == 0
         # Exactly one item_acquired should follow, then no more.
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "double", "blind", "shuffle")
+        assert acq["item"] in ("hint", "bonus", "blind", "shuffle")
         # Confirm no second item_acquired comes through.
         host.send_json({"type": "rename", "nickname": "ok"})
         nxt = host.receive_json()
@@ -575,7 +575,7 @@ def test_golden_clear_with_full_inventory_consumes_cell_without_drop():
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
         host_player = room.players[host_id]
-        host_player.inventory = ["hint", "double", "blind"]  # full
+        host_player.inventory = ["hint", "bonus", "blind"]  # full
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
@@ -589,7 +589,7 @@ def test_golden_clear_with_full_inventory_consumes_cell_without_drop():
         msg = host.receive_json()
         assert msg["type"] == "renamed"
         assert (0, 0) not in room.golden[host_id]
-        assert host_player.inventory == ["hint", "double", "blind"]
+        assert host_player.inventory == ["hint", "bonus", "blind"]
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)
@@ -600,9 +600,9 @@ def test_events_recorded_for_replay():
     room.events so the post-game replay can reconstruct the round."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
-        # 1) Use a self-effect item (double) by hand
+        # 1) Use a self-effect item (bonus) by hand
         host_player = room.players[host_id]
-        host_player.inventory[0] = "double"
+        host_player.inventory[0] = "bonus"
         host.send_json({"type": "use_item", "slot": 0})
         for _ in range(2):  # item_used + effect_start
             host.receive_json()
@@ -629,8 +629,8 @@ def test_events_recorded_for_replay():
         g_ctx.__exit__(None, None, None)
 
 
-def test_use_item_double_grants_score_multiplier(monkeypatch):
-    """Activating 'double' sets double_until in the future."""
+def test_use_item_bonus_sets_deadline(monkeypatch):
+    """Activating 'bonus' sets bonus_until in the future."""
     client = TestClient(app)
     with client.websocket_connect("/ws") as host:
         host.send_json({"type": "hello", "intent": "create"})
@@ -650,7 +650,7 @@ def test_use_item_double_grants_score_multiplier(monkeypatch):
             from app.main import manager
             room = manager.get(room_id)
             host_player = room.players[host_id]
-            host_player.inventory[0] = "double"
+            host_player.inventory[0] = "bonus"
 
             t0 = time.time()
             host.send_json({"type": "use_item", "slot": 0})
@@ -659,11 +659,11 @@ def test_use_item_double_grants_score_multiplier(monkeypatch):
             saw_effect = False
             for _ in range(4):
                 m = host.receive_json()
-                if m["type"] == "item_used" and m["item"] == "double":
+                if m["type"] == "item_used" and m["item"] == "bonus":
                     saw_used = True
-                if m["type"] == "effect_start" and m.get("effect") == "double":
+                if m["type"] == "effect_start" and m.get("effect") == "bonus":
                     saw_effect = True
                 if saw_used and saw_effect:
                     break
             assert saw_used and saw_effect
-            assert host_player.double_until > t0
+            assert host_player.bonus_until > t0
