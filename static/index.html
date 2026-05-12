@@ -39,6 +39,13 @@
        position: fixed stays in viewport coords and transforms don't stack. -->
   <div id="sumBadge" class="sum-badge" hidden>0</div>
 
+  <!-- Inventory hover tooltip — same body-direct placement so it stays
+       in viewport coords regardless of the rotated game container. -->
+  <div id="invTooltip" class="inv-tooltip" hidden>
+    <strong class="inv-tooltip-name"></strong>
+    <span class="inv-tooltip-desc"></span>
+  </div>
+
   <main id="app">
 
     <!-- Home / mode selection -->

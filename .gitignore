@@ -5,3 +5,7 @@ __pycache__/
 *.log
 # Hack samples that may have been dropped here for analysis
 manifest.zip
+# Secrets — actual values, never committed. Template is .env.example.
+.env
+.env.local
+.env.*.local

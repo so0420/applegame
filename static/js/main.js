@@ -258,8 +258,41 @@ document.querySelectorAll(".inv-slot").forEach((btn) => {
       showItemToast("⏳ 마지막 10초엔 공격 아이템을 쓸 수 없어요");
       return;
     }
+    hideInvTooltip();  // slot will be consumed; clear lingering tooltip
     state.ws?.send("use_item", { slot });
   });
+});
+
+// ---- Inventory hover tooltip (desktop only — mobile rotated UI has no
+// reliable hover signal so we just skip it there). ----
+const invTooltip = $("invTooltip");
+const invTooltipName = invTooltip.querySelector(".inv-tooltip-name");
+const invTooltipDesc = invTooltip.querySelector(".inv-tooltip-desc");
+function showInvTooltipFor(btn) {
+  const slot = parseInt(btn.dataset.slot, 10);
+  if (!Number.isInteger(slot)) return;
+  const item = state.inventory[slot];
+  const meta = item ? ITEM_META[item] : null;
+  if (!meta) return;
+  invTooltipName.textContent = `${meta.icon} ${meta.label}`;
+  invTooltipDesc.textContent = meta.desc;
+  invTooltip.hidden = false;
+  // Position above the slot. -8px lifts it off the slot a hair so the
+  // CSS arrow doesn't overlap the item icon.
+  const rect = btn.getBoundingClientRect();
+  invTooltip.style.left = (rect.left + rect.width / 2) + "px";
+  invTooltip.style.top = (rect.top - 8) + "px";
+}
+function hideInvTooltip() {
+  invTooltip.hidden = true;
+}
+// Only desktop inventory binds hover — mobile rotated overlay uses tap
+// to use, and hover events on touch are unreliable / hijack the tap.
+document.querySelectorAll("#inventory .inv-slot").forEach((btn) => {
+  btn.addEventListener("mouseenter", () => showInvTooltipFor(btn));
+  btn.addEventListener("mouseleave", hideInvTooltip);
+  btn.addEventListener("focus", () => showInvTooltipFor(btn));
+  btn.addEventListener("blur", hideInvTooltip);
 });
 
 // Join screen
@@ -433,6 +466,7 @@ function resetState() {
   state.initialGolden = [];
   $("inventory").hidden = true;
   $("mobileInventory").hidden = true;
+  $("invTooltip").hidden = true;
   document.querySelectorAll(".board-effect-overlay").forEach((el) => el.remove());
   if (state.matchTickerId) {
     clearInterval(state.matchTickerId);
@@ -465,10 +499,15 @@ function bindSocket(ws) {
       show("home");
       return;
     }
+    // Home screen has no live connection responsibility — silent close
+    // is the expected path after leaveAndGoHome().
     if (!screens.home.hidden) return;
-    alert("연결이 종료되었습니다.");
-    resetState();
-    show("home");
+    // Game/lobby was live and the socket dropped — usually a server
+    // restart or network blip. Reload the page so the user picks up
+    // the latest HTML/JS before reconnecting, instead of letting
+    // an outdated client talk to the new server.
+    alert("연결이 종료되었습니다. 페이지를 새로고침합니다.");
+    location.reload();
   });
 
   ws.addEventListener("msg:joined", (e) => {
@@ -833,15 +872,17 @@ function renderInventory() {
     if (item && ITEM_META[item]) {
       btn.classList.add("has-item");
       btn.textContent = ITEM_META[item].icon;
-      btn.title = `${ITEM_META[item].label} — ${ITEM_META[item].desc}`;
       const isAttack = ITEM_META[item].attack;
       btn.classList.toggle("locked", isAttack && locked);
     } else {
       btn.classList.remove("has-item", "locked");
       btn.textContent = "";
-      btn.title = "";
     }
   }
+  // If a slot the user is currently hovering changed contents, hide the
+  // stale tooltip — mouseleave doesn't fire when the slot's item is
+  // consumed in-place by a click.
+  if (typeof hideInvTooltip === "function") hideInvTooltip();
 }
 
 let _itemToastTimer = null;
@@ -1421,7 +1462,10 @@ function showResult(detail) {
   $("resultTitle").textContent = title;
   $("resultSubtitle").textContent = subtitle;
 
-  // Show result banner + new game/home buttons
+  // Show result banner + rematch/home buttons.
+  // friend 모드는 rematch가 곧 "대기실로 이동"이라 라벨을 그렇게 바꿔야
+  // 사용자가 누르자마자 새 게임이 시작될 거란 오해를 안 함. 호스트는
+  // 대기실에서 시작 버튼을 한 번 더 눌러야 게임이 시작됨.
   const players = state.room?.players ?? [];
   const enough = players.length >= 2;
   const canRematch =
@@ -1430,7 +1474,9 @@ function showResult(detail) {
       : state.mode === "friend"
         ? (state.playerId === state.hostId && enough)
         : enough;
-  $("rematchBtn").hidden = !canRematch;
+  const rematchBtn = $("rematchBtn");
+  rematchBtn.textContent = state.mode === "friend" ? "대기실로" : "새 게임";
+  rematchBtn.hidden = !canRematch;
   $("resultBanner").hidden = false;
 
   // Stay on game screen and auto-start replay if there's anything to play

@@ -911,6 +911,50 @@ button.ghost:hover {
   right: 2px;
   bottom: 2px;
 }
+
+/* Custom hover tooltip for inventory items — anchored above the slot
+   via JS-computed fixed coords. Body-direct so the rotated game
+   container's transform doesn't reparent the fixed positioning. */
+.inv-tooltip {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: rgba(26, 29, 36, 0.95);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 240px;
+  pointer-events: none;
+  z-index: 1000;
+  /* JS sets left/top to the slot's top-center; translate anchors the
+     tooltip so its bottom-center sits there. */
+  transform: translate(-50%, -100%);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  text-align: center;
+  white-space: normal;
+}
+.inv-tooltip[hidden] { display: none; }
+.inv-tooltip-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+.inv-tooltip-desc {
+  opacity: 0.85;
+}
+.inv-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: rgba(26, 29, 36, 0.95);
+}
 .inv-slot.mobile {
   width: 36px;
   height: 36px;
@@ -961,7 +1005,8 @@ button.ghost:hover {
    leaves the previous "콤보 N" text frozen on screen. */
 .combo-badge[hidden],
 .mobile-combo[hidden],
-.mobile-inventory[hidden] { display: none; }
+.mobile-inventory[hidden],
+.result-banner[hidden] { display: none; }
 .combo-badge.triggered {
   background: linear-gradient(135deg, #66bb6a, #2e7d32);
   box-shadow: 0 2px 10px rgba(46, 125, 50, 0.5);
