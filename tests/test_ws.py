@@ -371,8 +371,7 @@ def test_solo_submit_and_clear():
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
         _hello(ws, "p", "solo")
-        joined = ws.receive_json()
-        joined_room_id = joined["room"]["id"]
+        ws.receive_json()  # joined
         start = ws.receive_json()
         assert start["type"] == "game_start"
         board = start["board"]
@@ -395,13 +394,6 @@ def test_solo_submit_and_clear():
         if target_rect is None:
             return  # extremely unlikely, skip
         r1, c1, r2, c2 = target_rect
-        # Bypass the anti-macro drag gate by stamping a fake drag context.
-        from app.main import manager
-        import time as _t
-        room = manager.get(joined_room_id)
-        p = next(iter(room.players.values()))
-        p.drag_started_at = _t.time() - 0.1
-        p.drag_updates_in_gesture = 2
         ws.send_json({"type": "submit", "r1": r1, "c1": c1, "r2": r2, "c2": c2})
         msg = ws.receive_json()
         assert msg["type"] == "clear"
