@@ -973,16 +973,16 @@ function setCombo(n, triggered = false) {
     return;
   }
 
-  // Normal path. Only surface a real chain (n ≥ 2). A fresh n=1 means
-  // either game start or a window-break, which the player doesn't care
-  // to see as "콤보 1".
+  // Normal path. n == 0 only happens right after a trigger reset → hide.
+  // Any active chain (1+) is shown; combo breaks land at 1 too, so the
+  // badge briefly flashes a fresh "콤보 1" instead of staying blank.
   badge.classList.remove("triggered");
   badgeTrigger.hidden = true;
   icon.hidden = false;
   text.hidden = false;
   mobTrigger.hidden = true;
   mobDefault.hidden = false;
-  if (n >= 2) {
+  if (n > 0) {
     $("comboCount").textContent = String(n);
     $("mobileComboCount").textContent = String(n);
     badge.hidden = false;
