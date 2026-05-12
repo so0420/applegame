@@ -953,9 +953,8 @@ button.ghost:hover {
   border-radius: 999px;
   box-shadow: 0 2px 6px rgba(245, 124, 0, 0.35);
 }
-.combo-badge .combo-icon { font-size: 14px; }
+.combo-badge .combo-icon { font-size: 14px; margin-right: 4px; }
 .combo-badge strong { font-variant-numeric: tabular-nums; font-size: 14px; }
-.combo-badge .combo-default { display: inline-flex; align-items: center; gap: 4px; }
 .combo-badge.pulse { animation: combo-pulse 0.3s ease-out; }
 .combo-badge.triggered {
   background: linear-gradient(135deg, #66bb6a, #2e7d32);
