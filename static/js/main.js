@@ -940,42 +940,38 @@ function setCombo(n, triggered = false) {
   const badge = $("comboBadge");
   const mob = $("mobileCombo");
   clearTimeout(state._comboMessageTimer);
-  badge.classList.remove("triggered");
+  // Outside the items variant, the badge has no role to play.
+  if (state.variant !== "items") {
+    badge.classList.remove("triggered");
+    badge.hidden = true;
+    mob.hidden = true;
+    return;
+  }
+  // During items play, keep the badge anchored in the bar so the layout
+  // doesn't jump every time combo resets to 0. Show the current count;
+  // a trigger transiently swaps it for the drop notice.
+  badge.hidden = false;
+  mob.hidden = false;
   if (triggered) {
     badge.textContent = "🎁 콤보 3: 아이템 지급됨";
     mob.textContent = "🎁 콤보 3";
     badge.classList.add("triggered");
-    badge.hidden = false;
-    mob.hidden = false;
     badge.classList.remove("pulse");
     void badge.offsetWidth;
     badge.classList.add("pulse");
-    // After 2s, fall back to the post-trigger combo value (which is 0,
-    // i.e. hide the badge).
     state._comboMessageTimer = setTimeout(() => {
       badge.classList.remove("triggered");
-      if (state.combo > 0) {
-        badge.textContent = `🔥 콤보 ${state.combo}`;
-        mob.textContent = `🔥 ${state.combo}`;
-      } else {
-        badge.hidden = true;
-        mob.hidden = true;
-      }
+      badge.textContent = `🔥 콤보 ${state.combo}`;
+      mob.textContent = `🔥 ${state.combo}`;
     }, 2000);
     return;
   }
-  if (n > 0) {
-    badge.textContent = `🔥 콤보 ${n}`;
-    mob.textContent = `🔥 ${n}`;
-    badge.hidden = false;
-    mob.hidden = false;
-    badge.classList.remove("pulse");
-    void badge.offsetWidth;
-    badge.classList.add("pulse");
-  } else {
-    badge.hidden = true;
-    mob.hidden = true;
-  }
+  badge.classList.remove("triggered");
+  badge.textContent = `🔥 콤보 ${n}`;
+  mob.textContent = `🔥 ${n}`;
+  badge.classList.remove("pulse");
+  void badge.offsetWidth;
+  badge.classList.add("pulse");
 }
 
 function applyInitialGoldenToAll() {
