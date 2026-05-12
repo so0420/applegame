@@ -47,7 +47,11 @@ export class BoardRenderer {
     this.blind = false;             // hide numeric values
     this.hintCells = null;          // [[r,c], ...]
     this._shakeUntil = 0;
-    window.addEventListener("resize", () => this.resize());
+    // Keep bound refs so dispose() can actually removeEventListener them.
+    // Inline arrow functions would leak — the listener stays attached to
+    // window forever and keeps the whole renderer alive via closure.
+    this._onWindowResize = () => this.resize();
+    window.addEventListener("resize", this._onWindowResize);
     // Catch parent layout changes too (media-query breakpoints,
     // sidebar appearing, etc.) — without this, click coords go stale
     // when the board is resized by something other than the window.
@@ -55,6 +59,27 @@ export class BoardRenderer {
       this._ro = new ResizeObserver(() => this.resize());
       this._ro.observe(this.canvas.parentElement);
     }
+  }
+
+  dispose() {
+    if (this._onWindowResize) {
+      window.removeEventListener("resize", this._onWindowResize);
+      this._onWindowResize = null;
+    }
+    if (this._ro) {
+      this._ro.disconnect();
+      this._ro = null;
+    }
+    if (this._raf) {
+      cancelAnimationFrame(this._raf);
+      this._raf = null;
+    }
+    this._fadingCells = [];
+    this.board = null;
+    this.myDrag = null;
+    this.peerDrag = null;
+    this.hintCells = null;
+    this.goldenCells.clear();
   }
 
   setBoard(board) {

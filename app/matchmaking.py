@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 from . import schemas as S
 from .game.room import Player, Room
+from .ws.manager import send
 
 if TYPE_CHECKING:
     from .ws.manager import RoomManager
@@ -85,13 +86,18 @@ class Matchmaker:
             if future_count == 0:
                 self._pending_id = None
 
-    async def announce_countdown(self, room: Room) -> None:
-        """Broadcast the current countdown deadline to a room (call after
-        peer_joined so the new player learns the existing timer)."""
+    async def announce_countdown(self, room: Room, player: Player) -> None:
+        """Tell a newly-joined player the current countdown deadline.
+
+        Existing players already received the countdown via the broadcast
+        in _reschedule_locked (which fires whenever the deadline changes),
+        so this is a unicast — sending to the whole room would double up
+        every join-triggered countdown reset.
+        """
         if self._deadline_ms is None or self._pending_id != room.id:
             return
-        await self._broadcast(
-            room, S.msg(S.MATCH_COUNTDOWN, deadline_ms=self._deadline_ms),
+        await send(
+            player, S.msg(S.MATCH_COUNTDOWN, deadline_ms=self._deadline_ms),
         )
 
     # -- internal --

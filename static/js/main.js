@@ -101,10 +101,10 @@ attachDragInput(canvas, state.bigRenderer, {
     if (state.replayActive) return;
     if (state.focusedPlayerId !== state.playerId) return;
 
-    // Optimistic local clear — apply immediately if the rect locally
-    // sums to 10, so users see the apples vanish without waiting for
-    // a network round trip. Server stays authoritative; on reject we
-    // roll back via restoreCells.
+    // Tally the rect locally first. If it doesn't sum to 10, don't even
+    // bother the server — it would only respond with REJECT and the
+    // round trip is wasted traffic. Server-side validation still happens
+    // on what we do send, so this is purely a client-side optimisation.
     const board = state.bigRenderer.board;
     const cellsWithValue = [];
     let total = 0;
@@ -119,14 +119,16 @@ attachDragInput(canvas, state.bigRenderer, {
         }
       }
     }
-    let applied = false;
-    if (total === 10 && cellsWithValue.length > 0) {
-      const arr = cellsWithValue.map((c) => [c.r, c.c]);
-      state.bigRenderer.clearCells(arr);
-      state.miniRenderers.get(state.playerId)?.clearCells(arr);
-      applied = true;
-    }
-    state._pendingSubmits.push({ cells: cellsWithValue, applied });
+    if (total !== 10 || cellsWithValue.length === 0) return;
+
+    // Optimistic local clear — apply immediately so the apples vanish
+    // without waiting for the network round trip. Server stays
+    // authoritative; on reject we roll back via restoreCells (which
+    // can still happen if the client's board view is stale vs server).
+    const arr = cellsWithValue.map((c) => [c.r, c.c]);
+    state.bigRenderer.clearCells(arr);
+    state.miniRenderers.get(state.playerId)?.clearCells(arr);
+    state._pendingSubmits.push({ cells: cellsWithValue, applied: true });
     state.ws?.send("submit", rect);
   },
 });
@@ -436,6 +438,11 @@ function resetState() {
     clearInterval(state.matchTickerId);
     state.matchTickerId = null;
   }
+  if (state._peerDragTimers) {
+    for (const t of state._peerDragTimers.values()) clearTimeout(t);
+    state._peerDragTimers.clear();
+  }
+  for (const r of state.miniRenderers.values()) r.dispose?.();
   state.miniRenderers.clear();
   state.lbItems.clear();
   $("lbList").innerHTML = "";
@@ -606,6 +613,7 @@ function bindSocket(ws) {
     state.events = [];
     state.scores = {};
     state.gameWinnerId = null;
+    for (const r of state.miniRenderers.values()) r.dispose?.();
     state.miniRenderers.clear();
     state.lbItems.clear();
     $("lbList").innerHTML = "";
@@ -635,6 +643,19 @@ function bindSocket(ws) {
     if (player_id === state.focusedPlayerId) {
       state.bigRenderer.setMyDrag(rect);
     }
+    // Self-heal: if a peer submits something invalid (server rejects)
+    // and never drags again, the last rect would hang on their mini
+    // forever — the server doesn't broadcast peer rejects. Auto-clear
+    // after a few seconds with no update; the next drag_update will
+    // reset the timer.
+    if (!state._peerDragTimers) state._peerDragTimers = new Map();
+    const prev = state._peerDragTimers.get(player_id);
+    if (prev) clearTimeout(prev);
+    state._peerDragTimers.set(player_id, setTimeout(() => {
+      state.miniRenderers.get(player_id)?.setMyDrag(null);
+      if (player_id === state.focusedPlayerId) state.bigRenderer.setMyDrag(null);
+      state._peerDragTimers?.delete(player_id);
+    }, 2500));
   });
 
   ws.addEventListener("msg:clear", (e) => {
@@ -662,6 +683,11 @@ function bindSocket(ws) {
       if (player_id === state.focusedPlayerId) {
         state.bigRenderer.clearCells(cells);
         state.bigRenderer.setMyDrag(null);
+      }
+      const t = state._peerDragTimers?.get(player_id);
+      if (t) {
+        clearTimeout(t);
+        state._peerDragTimers.delete(player_id);
       }
     }
     state.scores = scores;
@@ -703,9 +729,11 @@ function bindSocket(ws) {
 function onReconnected(m) {
   state.playerId = m.player_id;
   onRoomUpdate(m.room);
-  state.events = (m.events || []).map((e) => ({
-    t_ms: e.t_ms, player_id: e.player_id, cells: e.cells,
-  }));
+  // Preserve every field — replay & active-effect restoration depend on
+  // kind / target_id / effect / until_ms / hint / board fields. The old
+  // mapping silently dropped them, which made the replay crash on the
+  // first non-clear event after reconnect.
+  state.events = (m.events || []).map((e) => ({ ...e }));
   state.scores = m.scores || {};
   state.endsAt = (m.ends_at || 0) * 1000;
   state.startedAt = state.endsAt - GAME_DURATION_MS;
@@ -752,6 +780,25 @@ function onReconnected(m) {
     if (p.connected === false) {
       const item = state.lbItems.get(p.id);
       if (item) item.li.classList.add("disconnected");
+    }
+  }
+  // Restore active effects (blind / bonus / hint) from the events log.
+  // Pair every effect_start with its effect_end; anything still open and
+  // not yet expired needs its visual re-applied so the player sees the
+  // same state they had before disconnect.
+  if (state.variant === "items") {
+    const nowMs = Date.now();
+    const open = new Map();  // "target_id|effect" -> effect_start event
+    for (const ev of state.events) {
+      if (ev.kind === "effect_start") {
+        open.set(`${ev.target_id}|${ev.effect}`, ev);
+      } else if (ev.kind === "effect_end") {
+        open.delete(`${ev.target_id}|${ev.effect}`);
+      }
+    }
+    for (const ev of open.values()) {
+      if (ev.until_ms && ev.until_ms <= nowMs) continue;
+      applyEffectStart(ev.target_id, ev.effect, ev.until_ms, ev.hint);
     }
   }
   reorderAndRankLeaderboard();
@@ -1126,7 +1173,7 @@ function renderLobby() {
     });
     $("variantHelper").textContent = isHost
       ? (state.variant === "items"
-          ? "황금 사과를 합10에 포함시키면 랜덤 아이템 (🔍힌트 ⚡2배 🙈숨김 🔀셔플) 획득"
+          ? "황금 사과를 합10에 포함시키면 랜덤 아이템 (🔍힌트 ➕추가점수 🙈숨김 🔀셔플) 획득"
           : "원하면 아이템전으로 바꿔보세요")
       : `호스트가 모드를 정합니다 (현재 ${state.variant === "items" ? "아이템전" : "클래식"})`;
   }
@@ -1179,6 +1226,10 @@ function startMatchCountdownTicker() {
 function buildLeaderboard() {
   const ul = $("lbList");
   ul.innerHTML = "";
+  // Tear down the previous round's renderers before dropping references —
+  // each one holds a window.resize listener + ResizeObserver that would
+  // otherwise stay alive on detached canvases.
+  for (const r of state.miniRenderers.values()) r.dispose?.();
   state.miniRenderers.clear();
   state.lbItems.clear();
   const players = state.room?.players ?? [];

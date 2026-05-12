@@ -196,7 +196,7 @@ async def session(
         if room.mode == "solo":
             await _start_game(room)
         elif room.mode == "random":
-            await matchmaker.announce_countdown(room)
+            await matchmaker.announce_countdown(room, player)
 
         # 4. Main message loop
         await _message_loop(ws, player, room, manager)
@@ -395,7 +395,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             # --- 2. Big clear ---------------------------------------------
             big_trigger = len(cells) >= BIG_CLEAR_CELLS
 
-            # --- 3. Combo (consecutive within 0.3s) -----------------------
+            # --- 3. Combo (consecutive within COMBO_WINDOW_S) -------------
             in_window = (
                 prev_clear_ts > 0.0
                 and (now - prev_clear_ts) <= COMBO_WINDOW_S

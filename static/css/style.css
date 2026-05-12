@@ -960,7 +960,8 @@ button.ghost:hover {
    badge needs an explicit hidden state — otherwise badge.hidden = true
    leaves the previous "콤보 N" text frozen on screen. */
 .combo-badge[hidden],
-.mobile-combo[hidden] { display: none; }
+.mobile-combo[hidden],
+.mobile-inventory[hidden] { display: none; }
 .combo-badge.triggered {
   background: linear-gradient(135deg, #66bb6a, #2e7d32);
   box-shadow: 0 2px 10px rgba(46, 125, 50, 0.5);

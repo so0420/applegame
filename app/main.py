@@ -28,7 +28,13 @@ app = FastAPI(
 
 
 class NoCacheMiddleware(BaseHTTPMiddleware):
-    """Disable browser caching for HTML/CSS/JS during development."""
+    """Disable browser caching for HTML/CSS/JS during development, and
+    stamp anti-indexing / no-AI-training headers on every response.
+
+    The header acts as a belt-and-braces around robots.txt for crawlers
+    that ignore robots.txt but honour X-Robots-Tag (Google, Bing, and
+    several AI crawlers explicitly do).
+    """
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
@@ -37,6 +43,9 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
+        response.headers["X-Robots-Tag"] = (
+            "noindex, nofollow, noarchive, nosnippet, noai, noimageai"
+        )
         return response
 
 
@@ -50,6 +59,13 @@ matchmaker = Matchmaker(manager, on_start=_start_game, broadcast=broadcast)
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/robots.txt")
+async def robots() -> FileResponse:
+    # Disallow every crawler — game is real-time, no content to index.
+    # AI training bots get explicit User-agent entries inside the file.
+    return FileResponse(STATIC_DIR / "robots.txt", media_type="text/plain")
 
 
 @app.get("/healthz")
