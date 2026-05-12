@@ -28,7 +28,7 @@ INITIAL_GOLDEN_COUNT = 3
 # If a single submit satisfies more than one trigger the player still
 # only receives a single item — the simultaneous-trigger cap.
 COMBO_THRESHOLD = 3
-COMBO_WINDOW_S = 1.0
+COMBO_WINDOW_S = 2.0
 BIG_CLEAR_CELLS = 4
 
 
