@@ -638,10 +638,10 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:clear", (e) => {
-    const { cells, scores, player_id, t_ms, combo, combo_triggered } = e.detail;
+    const { cells, scores, player_id, t_ms, combo } = e.detail;
     state.events.push({ kind: "clear", t_ms: t_ms ?? 0, player_id, cells });
     if (player_id === state.playerId && state.variant === "items") {
-      setCombo(combo ?? 0, !!combo_triggered);
+      setCombo(combo ?? 0);
     }
     if (player_id === state.playerId) {
       // Server confirmation of my own submit. Pop the matching pending
@@ -935,43 +935,22 @@ function clearAllEffectVisuals() {
   setCombo(0);
 }
 
-function setCombo(n, triggered = false) {
+function setCombo(n) {
   state.combo = n;
   const badge = $("comboBadge");
   const mob = $("mobileCombo");
-  clearTimeout(state._comboMessageTimer);
-  // Outside the items variant, the badge has no role to play.
-  if (state.variant !== "items") {
-    badge.classList.remove("triggered");
-    badge.hidden = true;
-    mob.hidden = true;
-    return;
-  }
-  // During items play, keep the badge anchored in the bar so the layout
-  // doesn't jump every time combo resets to 0. Show the current count;
-  // a trigger transiently swaps it for the drop notice.
-  badge.hidden = false;
-  mob.hidden = false;
-  if (triggered) {
-    badge.textContent = "🎁 콤보 3: 아이템 지급됨";
-    mob.textContent = "🎁 콤보 3";
-    badge.classList.add("triggered");
+  if (n > 0) {
+    $("comboCount").textContent = String(n);
+    $("mobileComboCount").textContent = String(n);
+    badge.hidden = false;
+    mob.hidden = false;
     badge.classList.remove("pulse");
     void badge.offsetWidth;
     badge.classList.add("pulse");
-    state._comboMessageTimer = setTimeout(() => {
-      badge.classList.remove("triggered");
-      badge.textContent = `🔥 콤보 ${state.combo}`;
-      mob.textContent = `🔥 ${state.combo}`;
-    }, 2000);
-    return;
+  } else {
+    badge.hidden = true;
+    mob.hidden = true;
   }
-  badge.classList.remove("triggered");
-  badge.textContent = `🔥 콤보 ${n}`;
-  mob.textContent = `🔥 ${n}`;
-  badge.classList.remove("pulse");
-  void badge.offsetWidth;
-  badge.classList.add("pulse");
 }
 
 function applyInitialGoldenToAll() {
