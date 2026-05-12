@@ -5,7 +5,14 @@ import time
 
 from fastapi.testclient import TestClient
 
-from app.game.board import COLS, ROWS, find_sum10_pair, random_empty_cell, shuffle_remaining
+from app.game.board import (
+    COLS,
+    ROWS,
+    find_sum10_pair,
+    random_apple_cell,
+    random_empty_cell,
+    shuffle_remaining,
+)
 from app.main import app
 
 
@@ -22,6 +29,18 @@ def test_random_empty_cell_returns_zero_position():
     assert random_empty_cell(b) is None
     b[3][7] = 0
     assert random_empty_cell(b) == (3, 7)
+
+
+def test_random_apple_cell_skips_empty_and_excluded():
+    b = [[0] * COLS for _ in range(ROWS)]
+    assert random_apple_cell(b) is None
+    b[1][2] = 5
+    assert random_apple_cell(b) == (1, 2)
+    # Only candidate is also excluded → None
+    assert random_apple_cell(b, exclude={(1, 2)}) is None
+    b[4][6] = 7
+    cell = random_apple_cell(b, exclude={(1, 2)})
+    assert cell == (4, 6)
 
 
 def test_shuffle_remaining_keeps_zeros_and_randomises_others():

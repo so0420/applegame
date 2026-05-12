@@ -57,6 +57,25 @@ def random_empty_cell(
     return rng.choice(empties)
 
 
+def random_apple_cell(
+    board: list[list[int]],
+    exclude: set[tuple[int, int]] | None = None,
+    rng: random.Random | None = None,
+) -> tuple[int, int] | None:
+    """Pick a random non-empty cell, optionally excluding a set of positions.
+    None if no eligible cell exists."""
+    rng = rng or random.Random()
+    excl = exclude or set()
+    apples: list[tuple[int, int]] = []
+    for r in range(ROWS):
+        for c in range(COLS):
+            if board[r][c] != 0 and (r, c) not in excl:
+                apples.append((r, c))
+    if not apples:
+        return None
+    return rng.choice(apples)
+
+
 def shuffle_remaining(
     board: list[list[int]], rng: random.Random | None = None
 ) -> None:

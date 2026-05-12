@@ -12,7 +12,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .. import schemas as S
 from ..game.board import (
     find_sum10_pair,
-    random_empty_cell,
+    random_apple_cell,
     shuffle_remaining,
     validate_and_clear,
 )
@@ -368,7 +368,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
 
 
 async def _golden_spawn_loop(room: Room) -> None:
-    """Periodically spawn a golden apple on each player's board."""
+    """Periodically mark an existing apple on each player's board as golden."""
     try:
         while True:
             await asyncio.sleep(GOLDEN_INTERVAL)
@@ -377,15 +377,15 @@ async def _golden_spawn_loop(room: Room) -> None:
                 if room.state != "playing":
                     return
                 for pid, board in room.boards.items():
-                    cell = random_empty_cell(board)
+                    existing = room.golden.setdefault(pid, set())
+                    # Promote an already-on-board apple to golden so the
+                    # client doesn't need to learn a new cell value — the
+                    # apple value it's drawing stays the same.
+                    cell = random_apple_cell(board, exclude=existing)
                     if cell is None:
                         continue
-                    # Refill the cell with a fresh 1..9 value so the golden
-                    # apple is actually pickable (cleared cells are 0).
-                    r, c = cell
-                    board[r][c] = random.randint(1, 9)
-                    room.golden.setdefault(pid, set()).add(cell)
-                    spawns.append((pid, r, c))
+                    existing.add(cell)
+                    spawns.append((pid, cell[0], cell[1]))
             for pid, r, c in spawns:
                 await broadcast(
                     room,
