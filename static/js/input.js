@@ -39,6 +39,11 @@ export function attachDragInput(canvas, renderer, callbacks) {
     pointerId = e.pointerId;
     start = cell;
     canvas.setPointerCapture(e.pointerId);
+    // Start a fresh throttle window for this gesture's pointermoves so
+    // the first move always reaches the server regardless of how long
+    // the previous gesture lingered.
+    lastSent = 0;
+    lastSentRect = null;
     const rect = rectFrom(cell, cell);
     renderer.setMyDrag(rect);
     callbacks.onUpdate?.(rect);
@@ -67,6 +72,11 @@ export function attachDragInput(canvas, renderer, callbacks) {
     if (!dragging || (e && e.pointerId !== pointerId)) return;
     dragging = false;
     pointerId = null;
+    // Reset BOTH throttle markers — otherwise the next gesture's first
+    // pointermove can be throttled against the previous gesture's
+    // timestamp and drop the only "non-pointerdown" drag_update,
+    // leaving the server with a single update → no_drag rejection.
+    lastSent = 0;
     lastSentRect = null;
     try { if (e) canvas.releasePointerCapture(e.pointerId); } catch {}
     const rect = renderer.myDrag;
