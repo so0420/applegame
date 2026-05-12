@@ -1352,7 +1352,7 @@ function showResult(detail) {
   state.gameWinnerId = winner_id ?? null;
   reorderAndRankLeaderboard();
 
-  let title = "결과";
+  let title = "";
   let subtitle = "";
   if (state.mode === "solo") {
     title = `점수 ${scores[state.playerId] ?? 0} / 170`;
