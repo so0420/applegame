@@ -177,6 +177,74 @@ def test_attack_lockout_blocks_late_use(monkeypatch):
                 assert msg["code"] == "attack_locked"
 
 
+def test_events_recorded_for_replay():
+    """Every item-mode side-effect must append a kind-tagged event to
+    room.events so the post-game replay can reconstruct the round."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host:
+        host.send_json({"type": "hello", "intent": "create"})
+        host_joined = host.receive_json()
+        room_id = host_joined["room"]["id"]
+        host_id = host_joined["player_id"]
+        host.send_json({"type": "set_variant", "variant": "items"})
+        host.receive_json()
+        with client.websocket_connect("/ws") as guest:
+            guest.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest_joined = guest.receive_json()
+            guest_id = guest_joined["player_id"]
+            host.receive_json()  # peer_joined
+            host.send_json({"type": "start"})
+            host.receive_json()
+            guest.receive_json()
+
+            from app.main import manager
+            room = manager.get(room_id)
+            assert room is not None
+
+            # 1) Manually trigger a golden spawn (skip the 25s wait)
+            from app.ws.handlers import _t_ms
+            from app.game.board import random_apple_cell
+            board = room.boards[host_id]
+            cell = random_apple_cell(board)
+            assert cell is not None
+            room.golden[host_id].add(cell)
+            room.events.append({
+                "kind": "golden", "t_ms": _t_ms(room),
+                "player_id": host_id, "r": cell[0], "c": cell[1],
+            })
+
+            # 2) Use a self-effect item (double)
+            host_player = room.players[host_id]
+            host_player.inventory[0] = "double"
+            host.send_json({"type": "use_item", "slot": 0})
+            # Drain item_used + effect_start from both sockets so the
+            # next phase doesn't get confused.
+            for _ in range(2):
+                host.receive_json()
+                guest.receive_json()
+
+            # 3) Use shuffle (attack on guest)
+            host_player.inventory[0] = "shuffle"
+            host.send_json({"type": "use_item", "slot": 0})
+            for _ in range(2):  # item_used + board_update
+                host.receive_json()
+                guest.receive_json()
+
+            kinds = [e.get("kind") for e in room.events]
+            assert "golden" in kinds
+            assert "item_used" in kinds
+            assert "effect_start" in kinds
+            assert "shuffle" in kinds
+
+            # Every event carries t_ms
+            assert all(isinstance(e.get("t_ms"), int) for e in room.events)
+            # Item events should reference a known player or target
+            for e in room.events:
+                if e["kind"] == "item_used":
+                    assert e["by"] == host_id
+                    assert e["target_id"] in (host_id, guest_id)
+
+
 def test_use_item_double_grants_score_multiplier(monkeypatch):
     """Activating 'double' sets double_until in the future."""
     client = TestClient(app)

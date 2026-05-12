@@ -41,6 +41,13 @@ DISCONNECT_GRACE = 300.0  # seconds — keep room alive when all players disconn
 ATTACK_ITEMS = {"blind", "shuffle"}
 
 
+def _t_ms(room: Room) -> int:
+    """Milliseconds since this round started — used for replay event ordering."""
+    if room.started_at is None:
+        return 0
+    return int((time.time() - room.started_at) * 1000)
+
+
 def _parse_capacity(raw: object) -> int:
     """Coerce a capacity hint from the client into [CAPACITY_MIN, CAPACITY_MAX]."""
     try:
@@ -326,7 +333,12 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         room.apples_left[player.id] -= len(cells)
         scores = {p.id: p.score for p in room.players.values()}
         t_ms = int((now - room.started_at) * 1000) if room.started_at else 0
-        room.events.append({"t_ms": t_ms, "player_id": player.id, "cells": cells})
+        room.events.append({
+            "kind": "clear",
+            "t_ms": t_ms,
+            "player_id": player.id,
+            "cells": cells,
+        })
 
         # Golden-apple pickup → grant a random item if there's a free slot.
         if room.variant == "items":
@@ -372,10 +384,11 @@ async def _golden_spawn_loop(room: Room) -> None:
     try:
         while True:
             await asyncio.sleep(GOLDEN_INTERVAL)
-            spawns: list[tuple[str, int, int]] = []
+            spawns: list[tuple[str, int, int, int]] = []
             async with room.lock:
                 if room.state != "playing":
                     return
+                t_ms = _t_ms(room)
                 for pid, board in room.boards.items():
                     existing = room.golden.setdefault(pid, set())
                     # Promote an already-on-board apple to golden so the
@@ -385,11 +398,18 @@ async def _golden_spawn_loop(room: Room) -> None:
                     if cell is None:
                         continue
                     existing.add(cell)
-                    spawns.append((pid, cell[0], cell[1]))
-            for pid, r, c in spawns:
+                    spawns.append((pid, cell[0], cell[1], t_ms))
+                    room.events.append({
+                        "kind": "golden",
+                        "t_ms": t_ms,
+                        "player_id": pid,
+                        "r": cell[0],
+                        "c": cell[1],
+                    })
+            for pid, r, c, t_ms in spawns:
                 await broadcast(
                     room,
-                    S.msg(S.GOLDEN_SPAWN, player_id=pid, r=r, c=c),
+                    S.msg(S.GOLDEN_SPAWN, player_id=pid, r=r, c=c, t_ms=t_ms),
                 )
     except asyncio.CancelledError:
         pass
@@ -469,12 +489,21 @@ async def _handle_use_item(
         # Consume the slot
         player.inventory[slot] = None
         payload["target_id"] = target_id
+        t_ms = _t_ms(room)
+        room.events.append({
+            "kind": "item_used",
+            "t_ms": t_ms,
+            "by": player.id,
+            "item": item,
+            "target_id": target_id,
+        })
 
     used_msg = S.msg(
         S.ITEM_USED,
         by=player.id,
         item=item,
         target_id=payload.get("target_id"),
+        t_ms=t_ms,
     )
     await broadcast(room, used_msg)
 
@@ -483,9 +512,21 @@ async def _handle_use_item(
         # state stays consistent.
         async with room.lock:
             board_copy = [row[:] for row in room.boards[target_id]]
+            shuffle_t_ms = _t_ms(room)
+            room.events.append({
+                "kind": "shuffle",
+                "t_ms": shuffle_t_ms,
+                "target_id": target_id,
+                "board": board_copy,
+            })
         await broadcast(
             room,
-            S.msg(S.BOARD_UPDATE, target_id=target_id, board=board_copy),
+            S.msg(
+                S.BOARD_UPDATE,
+                target_id=target_id,
+                board=board_copy,
+                t_ms=shuffle_t_ms,
+            ),
         )
         return
 
@@ -495,9 +536,19 @@ async def _handle_use_item(
         "target_id": target_id,
         "effect": item,
         "until_ms": until_ms,
+        "t_ms": t_ms,
     }
     if item == "hint":
         start_payload["hint"] = payload["hint"]
+    async with room.lock:
+        room.events.append({
+            "kind": "effect_start",
+            "t_ms": t_ms,
+            "target_id": target_id,
+            "effect": item,
+            "until_ms": until_ms,
+            **({"hint": payload["hint"]} if item == "hint" else {}),
+        })
     await broadcast(room, S.msg(S.EFFECT_START, **start_payload))
 
     delay = max(0.0, until - now)
@@ -514,8 +565,17 @@ async def _clear_effect_after(
         return
     if room.state != "playing":
         return
+    async with room.lock:
+        t_ms = _t_ms(room)
+        room.events.append({
+            "kind": "effect_end",
+            "t_ms": t_ms,
+            "target_id": target_id,
+            "effect": effect,
+        })
     await broadcast(
-        room, S.msg(S.EFFECT_END, target_id=target_id, effect=effect),
+        room,
+        S.msg(S.EFFECT_END, target_id=target_id, effect=effect, t_ms=t_ms),
     )
 
 

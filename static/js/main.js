@@ -491,7 +491,8 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:golden_spawn", (e) => {
-    const { player_id, r, c } = e.detail;
+    const { player_id, r, c, t_ms } = e.detail;
+    state.events.push({ kind: "golden", t_ms: t_ms ?? 0, player_id, r, c });
     const mini = state.miniRenderers.get(player_id);
     mini?.setGolden(r, c, true);
     if (player_id === state.focusedPlayerId) {
@@ -508,79 +509,33 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:item_used", (e) => {
-    const { by, item, target_id } = e.detail;
-    const meta = ITEM_META[item];
-    if (!meta) return;
-    const byPlayer = state.room?.players.find((p) => p.id === by);
-    const byName = byPlayer?.nickname ?? "?";
-    if (by === state.playerId) {
-      showItemToast(`${meta.icon} ${meta.label} 사용`);
-    } else if (target_id === state.playerId && meta.attack) {
-      showAttackToast(`${byName}님이 ${meta.icon} ${meta.label}!`);
-    } else if (meta.attack && target_id) {
-      const target = state.room?.players.find((p) => p.id === target_id);
-      const tName = target?.nickname ?? "?";
-      showItemToast(`${byName} → ${tName} (${meta.icon} ${meta.label})`);
-    }
+    const { by, item, target_id, t_ms } = e.detail;
+    state.events.push({ kind: "item_used", t_ms: t_ms ?? 0, by, item, target_id });
+    showItemUsedToast(by, item, target_id);
   });
 
   ws.addEventListener("msg:effect_start", (e) => {
-    const { target_id, effect, until_ms, hint } = e.detail;
-    if (target_id === state.playerId) {
-      if (effect === "double") {
-        state.effects.double = until_ms;
-        showBoardEffect("double", until_ms - Date.now());
-      } else if (effect === "blind") {
-        state.effects.blind = until_ms;
-        state.bigRenderer.setBlind(true);
-        state.miniRenderers.get(state.playerId)?.setBlind(true);
-        showBoardEffect("blind", until_ms - Date.now());
-      } else if (effect === "hint" && Array.isArray(hint)) {
-        const cells = hint.map((h) => [h.r, h.c]);
-        state.bigRenderer.setHint(cells);
-        state.miniRenderers.get(state.playerId)?.setHint(cells);
-      }
-    } else if (effect === "blind") {
-      const mini = state.miniRenderers.get(target_id);
-      mini?.setBlind(true);
-      if (target_id === state.focusedPlayerId) state.bigRenderer.setBlind(true);
-    }
+    const { target_id, effect, until_ms, hint, t_ms } = e.detail;
+    state.events.push({
+      kind: "effect_start", t_ms: t_ms ?? 0,
+      target_id, effect, until_ms, hint,
+    });
+    applyEffectStart(target_id, effect, until_ms, hint);
   });
 
   ws.addEventListener("msg:effect_end", (e) => {
-    const { target_id, effect } = e.detail;
-    if (effect === "double" && target_id === state.playerId) {
-      state.effects.double = 0;
-      hideBoardEffect("double");
-    } else if (effect === "blind") {
-      if (target_id === state.playerId) state.effects.blind = 0;
-      const mini = state.miniRenderers.get(target_id);
-      mini?.setBlind(false);
-      if (target_id === state.focusedPlayerId || target_id === state.playerId) {
-        state.bigRenderer.setBlind(false);
-      }
-      if (target_id === state.playerId) hideBoardEffect("blind");
-    } else if (effect === "hint") {
-      state.bigRenderer.setHint(null);
-      state.miniRenderers.get(state.playerId)?.setHint(null);
-    }
+    const { target_id, effect, t_ms } = e.detail;
+    state.events.push({ kind: "effect_end", t_ms: t_ms ?? 0, target_id, effect });
+    applyEffectEnd(target_id, effect);
   });
 
   ws.addEventListener("msg:board_update", (e) => {
-    const { target_id, board } = e.detail;
-    const mini = state.miniRenderers.get(target_id);
-    mini?.setBoard(board);
-    // After shuffle, the previously known golden cells may no longer
-    // correspond to the same values; server still considers them golden.
-    if (target_id === state.focusedPlayerId) {
-      state.bigRenderer.setBoard(board);
-      state.bigRenderer.shakeOnce?.();
-    }
-    if (target_id === state.playerId) {
-      state.bigRenderer.shakeOnce?.();
-      showBoardEffect("shuffle", 600);
-      setTimeout(() => hideBoardEffect("shuffle"), 600);
-    }
+    const { target_id, board, t_ms } = e.detail;
+    state.events.push({
+      kind: "shuffle", t_ms: t_ms ?? 0,
+      target_id, board: board.map((row) => row.slice()),
+    });
+    applyShuffle(target_id, board, /*animate*/ true);
   });
 
   ws.addEventListener("msg:queued", (e) => {
@@ -665,7 +620,7 @@ function bindSocket(ws) {
 
   ws.addEventListener("msg:clear", (e) => {
     const { cells, scores, player_id, t_ms } = e.detail;
-    state.events.push({ t_ms: t_ms ?? 0, player_id, cells });
+    state.events.push({ kind: "clear", t_ms: t_ms ?? 0, player_id, cells });
     if (player_id === state.playerId) {
       // Server confirmation of my own submit. Pop the matching pending
       // entry; only re-apply if it wasn't done optimistically already.
@@ -854,6 +809,97 @@ function hideBoardEffect(kind) {
   if (!el) return;
   el.classList.remove("show");
   setTimeout(() => { el.remove(); }, 220);
+}
+
+function showItemUsedToast(by, item, target_id) {
+  const meta = ITEM_META[item];
+  if (!meta) return;
+  const byPlayer = state.room?.players.find((p) => p.id === by);
+  const byName = byPlayer?.nickname ?? "?";
+  if (by === state.playerId) {
+    showItemToast(`${meta.icon} ${meta.label} 사용`);
+  } else if (target_id === state.playerId && meta.attack) {
+    showAttackToast(`${byName}님이 ${meta.icon} ${meta.label}!`);
+  } else if (meta.attack && target_id) {
+    const target = state.room?.players.find((p) => p.id === target_id);
+    const tName = target?.nickname ?? "?";
+    showItemToast(`${byName} → ${tName} (${meta.icon} ${meta.label})`);
+  }
+}
+
+function applyEffectStart(target_id, effect, until_ms, hint) {
+  const remainingMs = (until_ms ?? Date.now()) - Date.now();
+  if (target_id === state.playerId) {
+    if (effect === "double") {
+      state.effects.double = until_ms;
+      showBoardEffect("double", remainingMs);
+    } else if (effect === "blind") {
+      state.effects.blind = until_ms;
+      state.bigRenderer.setBlind(true);
+      state.miniRenderers.get(state.playerId)?.setBlind(true);
+      showBoardEffect("blind", remainingMs);
+    } else if (effect === "hint" && Array.isArray(hint)) {
+      const cells = hint.map((h) => [h.r, h.c]);
+      state.bigRenderer.setHint(cells);
+      state.miniRenderers.get(state.playerId)?.setHint(cells);
+    }
+  } else if (effect === "blind") {
+    const mini = state.miniRenderers.get(target_id);
+    mini?.setBlind(true);
+    if (target_id === state.focusedPlayerId) state.bigRenderer.setBlind(true);
+  }
+}
+
+function applyEffectEnd(target_id, effect) {
+  if (effect === "double" && target_id === state.playerId) {
+    state.effects.double = 0;
+    hideBoardEffect("double");
+  } else if (effect === "blind") {
+    if (target_id === state.playerId) state.effects.blind = 0;
+    const mini = state.miniRenderers.get(target_id);
+    mini?.setBlind(false);
+    if (target_id === state.focusedPlayerId || target_id === state.playerId) {
+      state.bigRenderer.setBlind(false);
+    }
+    if (target_id === state.playerId) hideBoardEffect("blind");
+  } else if (effect === "hint") {
+    state.bigRenderer.setHint(null);
+    state.miniRenderers.get(state.playerId)?.setHint(null);
+  }
+}
+
+function applyShuffle(target_id, board, animate) {
+  const mini = state.miniRenderers.get(target_id);
+  mini?.setBoard(board);
+  if (target_id === state.focusedPlayerId) {
+    state.bigRenderer.setBoard(board);
+    if (animate) state.bigRenderer.shakeOnce?.();
+  }
+  if (target_id === state.playerId) {
+    state.bigRenderer.shakeOnce?.();
+    if (animate) {
+      showBoardEffect("shuffle", 600);
+      setTimeout(() => hideBoardEffect("shuffle"), 600);
+    }
+  }
+  // Re-apply golden flags that survive shuffle: server keeps the gold set
+  // on the same (r,c) positions. We re-derive from any golden events that
+  // landed before the next shuffle by reading the renderer's existing set
+  // (which is already what we want — shuffle replaces values, not flags).
+}
+
+function clearAllEffectVisuals() {
+  state.bigRenderer.setBlind(false);
+  state.bigRenderer.setHint(null);
+  state.bigRenderer.clearGolden();
+  for (const r of state.miniRenderers.values()) {
+    r.setBlind(false);
+    r.setHint(null);
+    r.clearGolden();
+  }
+  hideBoardEffect("double");
+  hideBoardEffect("blind");
+  hideBoardEffect("shuffle");
 }
 
 // ---- Game lifecycle ----
@@ -1237,6 +1283,9 @@ function startReplay() {
     r.setBoard(state.initialBoard);
     r.setMyDrag(null);
   }
+  // Item-mode visuals must start from a clean slate so events between
+  // 0 and the seek point re-apply them deterministically.
+  clearAllEffectVisuals();
   state.scores = { ...state.replayCumScores };
   reorderAndRankLeaderboard();
 
@@ -1295,7 +1344,9 @@ function applyReplayEventsBetween(fromMs, toMs, animate) {
   // Events are appended in chronological order during the live game, so we
   // just iterate; if perf becomes a concern we can switch to a binary search.
   for (const ev of state.events) {
-    if (ev.t_ms > fromMs && ev.t_ms <= toMs) {
+    if (ev.t_ms <= fromMs || ev.t_ms > toMs) continue;
+    const kind = ev.kind || "clear";  // legacy events lacked kind
+    if (kind === "clear") {
       const mini = state.miniRenderers.get(ev.player_id);
       const isFocused = ev.player_id === state.focusedPlayerId;
       if (animate) {
@@ -1305,8 +1356,25 @@ function applyReplayEventsBetween(fromMs, toMs, animate) {
         mini?.applyClear(ev.cells);
         if (isFocused) state.bigRenderer.applyClear(ev.cells);
       }
+      // Replay scoring uses raw cell count — 2× double_score is a live-only
+      // bonus that's hard to reconstruct accurately, and showing the raw
+      // count keeps the replay's leaderboard easy to read.
       state.replayCumScores[ev.player_id] =
         (state.replayCumScores[ev.player_id] || 0) + ev.cells.length;
+    } else if (kind === "golden") {
+      const mini = state.miniRenderers.get(ev.player_id);
+      mini?.setGolden(ev.r, ev.c, true);
+      if (ev.player_id === state.focusedPlayerId) {
+        state.bigRenderer.setGolden(ev.r, ev.c, true);
+      }
+    } else if (kind === "shuffle") {
+      applyShuffle(ev.target_id, ev.board, animate);
+    } else if (kind === "effect_start") {
+      applyEffectStart(ev.target_id, ev.effect, ev.until_ms, ev.hint);
+    } else if (kind === "effect_end") {
+      applyEffectEnd(ev.target_id, ev.effect);
+    } else if (kind === "item_used") {
+      if (animate) showItemUsedToast(ev.by, ev.item, ev.target_id);
     }
   }
   state.scores = { ...state.replayCumScores };
@@ -1317,9 +1385,11 @@ function replaySeekTo(targetMs) {
   if (targetMs >= state.replayTime) {
     applyReplayEventsBetween(state.replayTime, targetMs, /*animate*/ false);
   } else {
-    // Backward: rebuild from initial
+    // Backward: rebuild from initial. Wipe goldens / effect overlays so
+    // events 0..target re-apply them; otherwise stale flags linger.
     state.bigRenderer.setBoard(state.initialBoard);
     for (const r of state.miniRenderers.values()) r.setBoard(state.initialBoard);
+    clearAllEffectVisuals();
     state.replayCumScores = {};
     for (const p of state.room?.players ?? []) state.replayCumScores[p.id] = 0;
     state.scores = { ...state.replayCumScores };
