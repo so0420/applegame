@@ -318,7 +318,7 @@ def test_random_match_first_client_joins_pending_room():
         joined = a.receive_json()
         assert joined["type"] == "joined"
         assert joined["room"]["mode"] == "random"
-        assert joined["room"]["capacity"] == 16
+        assert joined["room"]["capacity"] == 7
         # Random match anonymises — server-assigned Player-XXXX
         nick = joined["room"]["players"][0]["nickname"]
         assert nick.startswith("Player-")

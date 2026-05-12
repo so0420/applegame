@@ -1,8 +1,8 @@
 """Random matchmaking — single growing waiting room with countdown.
 
-Players joining 'random' all land in the same pending room (capacity 16).
-The countdown starts when 2 players are present (30 s) and short-circuits
-to 3 s when the room hits 16. When the timer fires the room is started.
+Players joining 'random' all land in the same pending room (capacity 7).
+The countdown starts when 2 players are present (60 s) and short-circuits
+to 5 s when the room hits 7. When the timer fires the room is started.
 """
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ log = logging.getLogger(__name__)
 
 class Matchmaker:
     MIN_PLAYERS = 2
-    MAX_PLAYERS = 16
-    WAIT_AFTER_PAIR = 30.0     # seconds after 2nd player joins
-    WAIT_WHEN_FULL = 3.0       # seconds once we hit MAX_PLAYERS
+    MAX_PLAYERS = 7
+    WAIT_AFTER_PAIR = 60.0     # seconds after 2nd player joins
+    WAIT_WHEN_FULL = 5.0       # seconds once we hit MAX_PLAYERS
 
     def __init__(
         self,

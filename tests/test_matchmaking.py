@@ -45,15 +45,14 @@ async def test_second_player_joins_same_room_starts_countdown():
 
 
 @pytest.mark.asyncio
-async def test_filling_to_max_short_circuits_to_3s():
+async def test_filling_to_max_short_circuits():
     mgr = RoomManager()
     mm = Matchmaker(mgr, on_start=_noop_start, broadcast=_noop_broadcast)
     players = [make_player(f"p{i}") for i in range(Matchmaker.MAX_PLAYERS)]
     last_deadline = None
     for p in players:
         _, last_deadline = await mm.enqueue(p)
-    # When MAX is reached the deadline gets shortened. Compare against the
-    # 30s mark — it must be substantially less now.
+    # Once full the deadline collapses to WAIT_WHEN_FULL.
     import time
     remaining_ms = last_deadline - int(time.time() * 1000)
     assert remaining_ms <= Matchmaker.WAIT_WHEN_FULL * 1000 + 200
