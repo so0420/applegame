@@ -21,9 +21,6 @@
       <button class="inv-slot mobile" data-slot="1" type="button" aria-label="아이템 2"></button>
       <button class="inv-slot mobile" data-slot="2" type="button" aria-label="아이템 3"></button>
     </div>
-    <div class="mobile-combo" id="mobileCombo" hidden>
-      🔥 <span id="mobileComboCount">1</span>
-    </div>
   </div>
   <!-- Vertical timer bar pinned to the right edge of the viewport -->
   <div id="verticalProgress" class="vertical-progress">
@@ -65,13 +62,10 @@
       </div>
 
       <div class="section">
-        <h3>아이템전 — 콤보로 획득</h3>
-        <p class="helper">친구방 호스트가 "아이템전"을 선택하면 활성화됩니다. 아래 조건 중 하나를 충족하는 클리어가 "콤보"로 카운트되고, <strong>3콤보마다 랜덤 아이템 1개</strong>가 인벤토리에 들어옵니다.</p>
-        <ul class="help-list">
-          <li>한 번에 <strong>4개 이상</strong>의 사과를 한꺼번에 지움</li>
-          <li>또는 직전 클리어로부터 <strong>0.3초 이내</strong>에 다시 클리어</li>
-        </ul>
-        <p class="helper">조건에 맞지 않는 클리어는 콤보를 0으로 리셋합니다. 인벤토리는 <strong>최대 3개</strong>까지만 보유 가능하며 가득 차 있으면 새 아이템은 그냥 버려져요.</p>
+        <h3>아이템전 — 황금 사과로 획득</h3>
+        <p class="helper">친구방 호스트가 "아이템전"을 선택하면 활성화됩니다. 게임이 시작될 때 보드의 무작위 위치에 <strong>황금 사과 3개</strong>가 미리 배치되어 있어요. 모든 플레이어에게 <strong>동일한 위치</strong>로 배치되므로 누가 먼저 차지하느냐가 관건.</p>
+        <p class="helper">황금 사과를 포함해 합10을 만들면 <strong>랜덤 아이템 1개</strong>가 인벤토리에 들어옵니다. 한 번에 여러 개의 황금을 함께 지워도 아이템은 1개만 지급돼요.</p>
+        <p class="helper">인벤토리는 <strong>최대 3개</strong>까지 보유 가능하며 가득 차 있으면 새 아이템은 그냥 버려집니다.</p>
       </div>
 
       <div class="section">
@@ -190,10 +184,6 @@
         <div class="toast-slot">
           <div id="itemToast" class="bar-toast item-toast" hidden></div>
           <div id="attackToast" class="bar-toast attack-toast" hidden></div>
-        </div>
-        <div class="combo-badge" id="comboBadge" hidden>
-          <span class="combo-icon">🔥</span>
-          <span class="combo-text">콤보 <strong id="comboCount">1</strong></span>
         </div>
         <div class="inventory" id="inventory" hidden>
           <button class="inv-slot" data-slot="0" type="button" aria-label="아이템 슬롯 1"></button>

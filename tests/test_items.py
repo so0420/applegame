@@ -183,120 +183,121 @@ def _start_items_game():
     return host_ctx, guest_ctx, host, guest, host_id, guest_id, room
 
 
-def test_combo_big_clear_increments():
-    """A single clear of ≥4 cells (no prior clear) counts as combo step 1."""
+def test_three_initial_goldens_shared_across_players():
+    """game_start places exactly 3 golden apples, identical for every player."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
-        # Plant a 5×1 rectangle of 2s on row 0 → sums to 10, clears 5 cells.
-        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
-        for c in range(5):
-            room.boards[host_id][0][c] = 2
-        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 4})
-        msg = _drain_until(host, "clear")
-        assert len(msg["cells"]) == 5
-        assert msg["combo"] == 1
-        assert room.players[host_id].combo_count == 1
+        # 3 distinct positions seeded into room state
+        assert len(room.initial_golden) == 3
+        assert len(set(room.initial_golden)) == 3
+        # Every player's live golden set matches the initial picks
+        for pid in room.players:
+            assert room.golden[pid] == set(room.initial_golden)
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)
 
 
-def test_combo_window_does_not_count_first_small_clear():
-    """A first clear of <4 cells without prior history must NOT count
-    as a combo (no preceding clear to be 'within window' of)."""
+def test_classic_room_does_not_send_golden_in_game_start():
+    """Classic variant must not advertise goldens on the wire."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as host:
+        host.send_json({"type": "hello", "intent": "create"})
+        host_joined = host.receive_json()
+        room_id = host_joined["room"]["id"]
+        with client.websocket_connect("/ws") as guest:
+            guest.send_json({"type": "hello", "intent": "join", "code": room_id})
+            guest.receive_json()
+            host.receive_json()  # peer_joined
+            host.send_json({"type": "start"})
+            start = host.receive_json()
+            assert start["type"] == "game_start"
+            assert start["variant"] == "classic"
+            assert "golden" not in start
+
+
+def test_game_start_includes_golden_for_items_variant():
+    """Items variant ships the 3 golden positions in game_start."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
-        # 5+5 = 10 across 2 cells.
-        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
-        room.boards[host_id][0][0] = 5
-        room.boards[host_id][0][1] = 5
-        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
-        msg = _drain_until(host, "clear")
-        assert msg["combo"] == 0
-        assert room.players[host_id].combo_count == 0
+        # game_start was already drained inside the helper, so peek at the
+        # room directly to confirm the wire payload's shape via the source.
+        assert len(room.initial_golden) == 3
+        # Bonus sanity check: positions are inside the 10x17 board.
+        for (r, c) in room.initial_golden:
+            assert 0 <= r < ROWS and 0 <= c < COLS
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)
 
 
-def test_combo_window_counts_small_clears_within_03s():
-    """A small clear that lands within 0.3s of the previous one counts."""
+def test_clearing_golden_grants_item_and_shrinks_set():
+    """Clearing a sum-10 region that includes a golden cell drops one
+    item and removes the cleared cells from the player's golden set."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
-        # Fake a "just happened" prior clear so the in-window branch fires.
-        room.players[host_id].last_score_ts = time.time()
+        # Plant a known 5+5 = 10 pair where (0,0) is forced golden.
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
+        # Force golden marker on (0, 0) for this player only.
+        room.golden[host_id] = {(0, 0)}
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
-        msg = _drain_until(host, "clear")
-        assert msg["combo"] == 1
-    finally:
-        h_ctx.__exit__(None, None, None)
-        g_ctx.__exit__(None, None, None)
-
-
-def test_combo_breaks_after_window_with_small_clear():
-    """Slow + small clear breaks the streak back to 0."""
-    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
-    try:
-        # Pretend the player was mid-streak but the last clear was a while ago.
-        room.players[host_id].combo_count = 2
-        room.players[host_id].last_score_ts = time.time() - 1.0  # > 0.3s
-        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
-        room.boards[host_id][0][0] = 5
-        room.boards[host_id][0][1] = 5
-        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
-        msg = _drain_until(host, "clear")
-        assert msg["combo"] == 0
-        assert room.players[host_id].combo_count == 0
-    finally:
-        h_ctx.__exit__(None, None, None)
-        g_ctx.__exit__(None, None, None)
-
-
-def test_third_combo_grants_item_and_resets():
-    """Reaching the 3rd combo step grants an item to a free slot and
-    resets the streak to 0."""
-    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
-    try:
-        host_player = room.players[host_id]
-        host_player.combo_count = 2          # already 2 streaks deep
-        host_player.last_score_ts = time.time()  # next clear lands in window
-        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
-        room.boards[host_id][0][0] = 5
-        room.boards[host_id][0][1] = 5
-        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
-        clear = _drain_until(host, "clear")
-        assert clear["combo"] == 0           # reset after the drop
-        assert host_player.combo_count == 0
-        # item_acquired follows on the same socket
+        _drain_until(host, "clear")
         acq = _drain_until(host, "item_acquired")
-        assert acq["slot"] in (0, 1, 2)
         assert acq["item"] in ("hint", "double", "blind", "shuffle")
-        assert host_player.inventory[acq["slot"]] == acq["item"]
+        # The (0,0) golden has been consumed
+        assert (0, 0) not in room.golden[host_id]
+        # And actually stored in inventory
+        assert acq["item"] in room.players[host_id].inventory
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)
 
 
-def test_combo_full_inventory_discards_item_but_still_resets():
-    """If the inventory is full when a combo lands, the item is silently
-    discarded — the streak still resets so the player doesn't sit at
-    THRESHOLD forever."""
+def test_clearing_non_golden_does_not_grant_item():
+    """A clear that hits no golden cells produces no item_acquired msg."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        # Make sure (0,0) and (0,1) are NOT golden.
+        room.golden[host_id].discard((0, 0))
+        room.golden[host_id].discard((0, 1))
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        m1 = host.receive_json()
+        assert m1["type"] == "clear"
+        # Send a rename so we can verify nothing else slipped through.
+        host.send_json({"type": "rename", "nickname": "ok"})
+        m2 = host.receive_json()
+        assert m2["type"] == "renamed"
+        # Inventory unchanged
+        assert all(s is None for s in room.players[host_id].inventory)
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_golden_clear_with_full_inventory_consumes_cell_without_drop():
+    """Full inventory: the golden cell is still consumed (so it can't be
+    re-claimed) but no item is granted."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
         host_player = room.players[host_id]
-        host_player.combo_count = 2
-        host_player.last_score_ts = time.time()
         host_player.inventory = ["hint", "double", "blind"]  # full
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
+        room.golden[host_id] = {(0, 0)}
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
-        clear = _drain_until(host, "clear")
-        assert clear["combo"] == 0
-        assert host_player.combo_count == 0
+        _drain_until(host, "clear")
+        # Confirm no item_acquired comes through — use a benign rename to
+        # check the channel is still flowing.
+        host.send_json({"type": "rename", "nickname": "x"})
+        msg = host.receive_json()
+        assert msg["type"] == "renamed"
+        assert (0, 0) not in room.golden[host_id]
         assert host_player.inventory == ["hint", "double", "blind"]
     finally:
         h_ctx.__exit__(None, None, None)

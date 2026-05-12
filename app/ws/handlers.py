@@ -20,9 +20,6 @@ from ..game.room import (
     CAPACITY_DEFAULT,
     CAPACITY_MAX,
     CAPACITY_MIN,
-    COMBO_BIG_CELLS,
-    COMBO_THRESHOLD,
-    COMBO_WINDOW_S,
     EFFECT_BLIND,
     EFFECT_DOUBLE,
     EFFECT_HINT,
@@ -130,6 +127,11 @@ async def session(
                 ends_at=room.ends_at,
                 state=room.state,
                 winner_id=room.winner_id,
+                initial_golden=[[r, c] for (r, c) in r.initial_golden],
+                golden={
+                    pid: [[gr, gc] for (gr, gc) in cells]
+                    for pid, cells in r.golden.items()
+                },
             ))
             await broadcast(
                 room,
@@ -286,10 +288,15 @@ async def _start_game(room: Room) -> None:
         room.start()
         initial = room.initial_board
         variant = room.variant
-    await broadcast(
-        room,
-        S.msg(S.GAME_START, board=initial, ends_at=room.ends_at, variant=variant),
-    )
+        golden = [[r, c] for (r, c) in room.initial_golden]
+    payload: dict[str, Any] = {
+        "board": initial,
+        "ends_at": room.ends_at,
+        "variant": variant,
+    }
+    if variant == "items":
+        payload["golden"] = golden
+    await broadcast(room, S.msg(S.GAME_START, **payload))
 
     async def end_after_timeout() -> None:
         try:
@@ -306,7 +313,6 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
     if None in (r1, c1, r2, c2):
         return
     item_msg: dict[str, Any] | None = None
-    combo_after = 0
     async with room.lock:
         if room.state != "playing":
             return
@@ -318,7 +324,6 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             await send(player, S.msg(S.REJECT, reason="invalid_or_taken"))
             return
         now = time.time()
-        prev_clear_ts = player.last_score_ts
         gained = len(cells)
         # 2× multiplier — applied if the effect is still active. Bonus is
         # tracked as added apples-equivalent so the existing scoring model
@@ -339,37 +344,28 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             "cells": cells,
         })
 
-        # Combo bookkeeping → grant a random item every COMBO_THRESHOLD steps.
+        # Golden-apple pickup → grant a random item if there's a free slot.
+        # Multiple goldens cleared in one submit still grants only one item.
         if room.variant == "items":
-            is_big = len(cells) >= COMBO_BIG_CELLS
-            in_window = (
-                prev_clear_ts > 0.0
-                and (now - prev_clear_ts) <= COMBO_WINDOW_S
-            )
-            if is_big or in_window:
-                player.combo_count += 1
-                if player.combo_count >= COMBO_THRESHOLD:
-                    free_slot = next(
-                        (i for i, s in enumerate(player.inventory) if s is None),
-                        None,
+            golden_cells = room.golden.get(player.id) or set()
+            consumed = [tuple(cell) for cell in cells if tuple(cell) in golden_cells]
+            if consumed:
+                for cell in consumed:
+                    golden_cells.discard(cell)
+                free_slot = next(
+                    (i for i, s in enumerate(player.inventory) if s is None),
+                    None,
+                )
+                if free_slot is not None:
+                    item = random.choice(ITEM_KINDS)
+                    player.inventory[free_slot] = item
+                    item_msg = S.msg(
+                        S.ITEM_ACQUIRED,
+                        player_id=player.id,
+                        slot=free_slot,
+                        item=item,
+                        t_ms=t_ms,
                     )
-                    if free_slot is not None:
-                        item = random.choice(ITEM_KINDS)
-                        player.inventory[free_slot] = item
-                        item_msg = S.msg(
-                            S.ITEM_ACQUIRED,
-                            player_id=player.id,
-                            slot=free_slot,
-                            item=item,
-                            t_ms=t_ms,
-                        )
-                    # Reset whether or not we could store the item — players
-                    # without a free slot still "spend" the streak rather
-                    # than have it sit at THRESHOLD indefinitely.
-                    player.combo_count = 0
-            else:
-                player.combo_count = 0
-            combo_after = player.combo_count
 
     await broadcast(
         room,
@@ -379,7 +375,6 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             cells=cells,
             scores=scores,
             t_ms=t_ms,
-            combo=combo_after,
         ),
     )
     if item_msg is not None:

@@ -59,7 +59,7 @@ const state = {
   inventory: [null, null, null],
   effects: { double: 0, blind: 0, hint: 0 },  // expiry ms
   effectTimers: {},
-  combo: 0,
+  initialGolden: [],   // [[r,c], ...] picked at game start
 };
 
 const ITEM_META = {
@@ -405,6 +405,7 @@ function resetState() {
   state.variant = "classic";
   state.inventory = [null, null, null];
   state.effects = { double: 0, blind: 0, hint: 0 };
+  state.initialGolden = [];
   $("inventory").hidden = true;
   $("mobileInventory").hidden = true;
   document.querySelectorAll(".board-effect-overlay").forEach((el) => el.remove());
@@ -615,11 +616,8 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:clear", (e) => {
-    const { cells, scores, player_id, t_ms, combo } = e.detail;
+    const { cells, scores, player_id, t_ms } = e.detail;
     state.events.push({ kind: "clear", t_ms: t_ms ?? 0, player_id, cells });
-    if (player_id === state.playerId && state.variant === "items") {
-      setCombo(combo ?? 0);
-    }
     if (player_id === state.playerId) {
       // Server confirmation of my own submit. Pop the matching pending
       // entry; only re-apply if it wasn't done optimistically already.
@@ -695,9 +693,11 @@ function onReconnected(m) {
     state.inventory = Array.isArray(me.inventory)
       ? [me.inventory[0] ?? null, me.inventory[1] ?? null, me.inventory[2] ?? null]
       : [null, null, null];
-    setCombo(typeof me.combo === "number" ? me.combo : 0);
   }
   renderInventory();
+  state.initialGolden = Array.isArray(m.initial_golden)
+    ? m.initial_golden.map(([r, c]) => [r, c])
+    : [];
 
   // Build leaderboard, then set each player's current board state
   buildLeaderboard();
@@ -705,6 +705,17 @@ function onReconnected(m) {
     for (const [pid, board] of Object.entries(m.boards)) {
       const mini = state.miniRenderers.get(pid);
       if (mini) mini.setBoard(board);
+    }
+  }
+  // Re-stamp goldens that are still in play. Server sends a per-player
+  // dict so partial pickups are honoured rather than reset to the
+  // initial set.
+  if (state.variant === "items" && m.golden && typeof m.golden === "object") {
+    for (const [pid, cells] of Object.entries(m.golden)) {
+      const renderer = state.miniRenderers.get(pid);
+      if (!renderer) continue;
+      renderer.clearGolden();
+      for (const [r, c] of cells) renderer.setGolden(r, c, true);
     }
   }
   // Restore focus to me — also copies my current board onto the big
@@ -887,32 +898,24 @@ function applyShuffle(target_id, board, animate) {
 function clearAllEffectVisuals() {
   state.bigRenderer.setBlind(false);
   state.bigRenderer.setHint(null);
+  state.bigRenderer.clearGolden();
   for (const r of state.miniRenderers.values()) {
     r.setBlind(false);
     r.setHint(null);
+    r.clearGolden();
   }
   hideBoardEffect("double");
   hideBoardEffect("blind");
   hideBoardEffect("shuffle");
-  setCombo(0);
 }
 
-function setCombo(n) {
-  state.combo = n;
-  const badge = $("comboBadge");
-  const mob = $("mobileCombo");
-  if (n > 0) {
-    $("comboCount").textContent = String(n);
-    $("mobileComboCount").textContent = String(n);
-    badge.hidden = false;
-    mob.hidden = false;
-    // brief pulse on each step
-    badge.classList.remove("pulse");
-    void badge.offsetWidth;
-    badge.classList.add("pulse");
-  } else {
-    badge.hidden = true;
-    mob.hidden = true;
+function applyInitialGoldenToAll() {
+  if (!Array.isArray(state.initialGolden) || state.initialGolden.length === 0) return;
+  for (const [r, c] of state.initialGolden) {
+    state.bigRenderer.setGolden(r, c, true);
+    for (const renderer of state.miniRenderers.values()) {
+      renderer.setGolden(r, c, true);
+    }
   }
 }
 
@@ -932,6 +935,9 @@ function onGameStart(m) {
     state.matchTickerId = null;
   }
   state.initialBoard = m.board.map((row) => row.slice());
+  state.initialGolden = Array.isArray(m.golden)
+    ? m.golden.map(([r, c]) => [r, c])
+    : [];
   state.scores = {};
   for (const p of state.room?.players ?? []) state.scores[p.id] = 0;
   state.gameWinnerId = null;
@@ -945,9 +951,11 @@ function onGameStart(m) {
   state.bigRenderer.setMyDrag(null);
   state.bigRenderer.setBlind(false);
   state.bigRenderer.setHint(null);
-  setCombo(0);
+  state.bigRenderer.clearGolden();
 
   buildLeaderboard();
+  // Stamp the shared golden positions onto every renderer once minis exist
+  if (state.variant === "items") applyInitialGoldenToAll();
   // Default focus = me
   setFocusedPlayer(state.playerId, /*forceCopy*/ false);
   reorderAndRankLeaderboard();
@@ -1120,6 +1128,13 @@ function setFocusedPlayer(pid, forceCopy = true) {
     if (mini && mini.board) {
       state.bigRenderer.setBoard(mini.board);
       state.bigRenderer.setMyDrag(null);
+      // Carry over the focused player's surviving golden cells so the
+      // big board shows the same gold markers as their mini.
+      state.bigRenderer.clearGolden();
+      for (const key of mini.goldenCells) {
+        const [r, c] = key.split(",").map(Number);
+        state.bigRenderer.setGolden(r, c, true);
+      }
     }
   }
   // Label only when looking at someone else
@@ -1300,6 +1315,9 @@ function startReplay() {
   // Item-mode visuals must start from a clean slate so events between
   // 0 and the seek point re-apply them deterministically.
   clearAllEffectVisuals();
+  // Goldens were set at game start, not as events, so re-stamp them
+  // so the replay starts from the true initial visual state.
+  if (state.variant === "items") applyInitialGoldenToAll();
   state.scores = { ...state.replayCumScores };
   reorderAndRankLeaderboard();
 
@@ -1393,11 +1411,12 @@ function replaySeekTo(targetMs) {
   if (targetMs >= state.replayTime) {
     applyReplayEventsBetween(state.replayTime, targetMs, /*animate*/ false);
   } else {
-    // Backward: rebuild from initial. Wipe effect overlays / combo so
-    // events 0..target re-apply them; otherwise stale state lingers.
+    // Backward: rebuild from initial. Wipe effect overlays so events
+    // 0..target re-apply them; otherwise stale state lingers.
     state.bigRenderer.setBoard(state.initialBoard);
     for (const r of state.miniRenderers.values()) r.setBoard(state.initialBoard);
     clearAllEffectVisuals();
+    if (state.variant === "items") applyInitialGoldenToAll();
     state.replayCumScores = {};
     for (const p of state.room?.players ?? []) state.replayCumScores[p.id] = 0;
     state.scores = { ...state.replayCumScores };

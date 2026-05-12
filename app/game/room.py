@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -19,13 +20,10 @@ EFFECT_DOUBLE = 8.0             # 2× score duration
 EFFECT_BLIND = 3.0              # number-hide duration
 EFFECT_HINT = 3.0               # hint highlight duration
 ITEM_KINDS = ("hint", "double", "blind", "shuffle")
-# Combo-based item drop. A clear counts as a combo step if it clears
-# COMBO_BIG_CELLS+ cells in one shot OR lands within COMBO_WINDOW_S of
-# the previous clear. Every COMBO_THRESHOLD steps drops an item and
-# resets the counter; any non-qualifying clear breaks the streak.
-COMBO_THRESHOLD = 3
-COMBO_WINDOW_S = 0.3
-COMBO_BIG_CELLS = 4
+# Golden apples: a fixed number of apples are marked golden at game
+# start (same positions for every player). Clearing one grants a
+# random item into a free inventory slot; no respawn over time.
+INITIAL_GOLDEN_COUNT = 3
 
 
 @dataclass
@@ -43,7 +41,6 @@ class Player:
     )
     double_until: float = 0.0       # score-multiplier deadline (epoch s)
     blind_until: float = 0.0        # number-hide deadline imposed on me
-    combo_count: int = 0            # current combo streak (resets on miss or drop)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -52,7 +49,6 @@ class Player:
             "score": self.score,
             "connected": self.connected,
             "inventory": list(self.inventory),
-            "combo": self.combo_count,
         }
 
 
@@ -86,6 +82,11 @@ class Room:
     cleanup_task: asyncio.Task | None = None
     # Item-mode state
     variant: RoomVariant = "classic"
+    # Shared list of (r, c) cells flagged golden at game start. Same for
+    # every player so the strategic landmarks are equal.
+    initial_golden: list[tuple[int, int]] = field(default_factory=list)
+    # Per-player live set of remaining (i.e. not yet cleared) golden cells.
+    golden: dict[str, set[tuple[int, int]]] = field(default_factory=dict)
 
     @property
     def is_full(self) -> bool:
@@ -116,7 +117,6 @@ class Room:
             p.inventory = [None] * INVENTORY_SIZE
             p.double_until = 0.0
             p.blind_until = 0.0
-            p.combo_count = 0
 
     def start(self) -> None:
         self._init_boards()
@@ -129,7 +129,6 @@ class Room:
             p.inventory = [None] * INVENTORY_SIZE
             p.double_until = 0.0
             p.blind_until = 0.0
-            p.combo_count = 0
 
     def _init_boards(self) -> None:
         """Generate one master board, deep-copy per player."""
@@ -137,6 +136,12 @@ class Room:
         self.initial_board = [row[:] for row in master]
         self.boards = {pid: [row[:] for row in master] for pid in self.players}
         self.apples_left = {pid: TOTAL for pid in self.players}
+        # Pick a shared set of golden cells (only used in items variant,
+        # but we always pick so reconnect / rematch paths stay simple).
+        all_cells = [(r, c) for r in range(ROWS) for c in range(COLS)]
+        picks = random.sample(all_cells, k=INITIAL_GOLDEN_COUNT)
+        self.initial_golden = picks
+        self.golden = {pid: set(picks) for pid in self.players}
         self.events = []
 
     def determine_winner(self) -> str | None:
