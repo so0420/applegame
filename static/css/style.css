@@ -953,6 +953,12 @@ button.ghost:hover {
   border-radius: 999px;
   box-shadow: 0 2px 6px rgba(245, 124, 0, 0.35);
 }
+/* Author display rules above override UA's [hidden]{display:none}, so
+   explicit overrides are needed for elements that toggle via .hidden. */
+.combo-badge[hidden],
+.mobile-combo[hidden],
+.inventory[hidden],
+.mobile-inventory[hidden] { display: none !important; }
 .combo-badge .combo-icon { font-size: 14px; }
 .combo-badge strong { font-variant-numeric: tabular-nums; font-size: 14px; }
 .combo-badge.pulse { animation: combo-pulse 0.3s ease-out; }
