@@ -301,6 +301,30 @@ def test_combo_three_consecutive_clears_grants_item():
         g_ctx.__exit__(None, None, None)
 
 
+def test_combo_goes_up_to_two_within_window():
+    """Sanity: with no prearm, a second clear within the window should
+    take combo from 1 → 2 (proves the increment branch fires)."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        room.golden[host_id] = set()
+        # First clear — sets last_score_ts and combo=1
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        m1 = _drain_until(host, "clear")
+        assert m1["combo"] == 1
+        # Second clear immediately afterward (well within 0.5s)
+        room.boards[host_id][1][0] = 5
+        room.boards[host_id][1][1] = 5
+        host.send_json({"type": "submit", "r1": 1, "c1": 0, "r2": 1, "c2": 1})
+        m2 = _drain_until(host, "clear")
+        assert m2["combo"] == 2
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
 def test_combo_broken_when_gap_exceeds_window():
     """A small clear long after the previous one starts a new chain at 1."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
