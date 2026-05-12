@@ -956,6 +956,11 @@ button.ghost:hover {
 .combo-badge .combo-icon { font-size: 14px; margin-right: 4px; }
 .combo-badge strong { font-variant-numeric: tabular-nums; font-size: 14px; }
 .combo-badge.pulse { animation: combo-pulse 0.3s ease-out; }
+/* Author display rule above overrides UA [hidden]{display:none}, so the
+   badge needs an explicit hidden state — otherwise badge.hidden = true
+   leaves the previous "콤보 N" text frozen on screen. */
+.combo-badge[hidden],
+.mobile-combo[hidden] { display: none; }
 .combo-badge.triggered {
   background: linear-gradient(135deg, #66bb6a, #2e7d32);
   box-shadow: 0 2px 10px rgba(46, 125, 50, 0.5);
