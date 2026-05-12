@@ -507,8 +507,14 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:item_used", (e) => {
-    const { by, item, target_id, t_ms } = e.detail;
+    const { by, item, target_id, slot, t_ms } = e.detail;
     state.events.push({ kind: "item_used", t_ms: t_ms ?? 0, by, item, target_id });
+    // Server clears the slot — mirror that locally so the inventory UI
+    // empties immediately for the player who triggered the use.
+    if (by === state.playerId && typeof slot === "number") {
+      state.inventory[slot] = null;
+      renderInventory();
+    }
     showItemUsedToast(by, item, target_id);
   });
 

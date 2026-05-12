@@ -39,7 +39,7 @@ GAME_END = "game_end"         # {scores, winner_id}
 ERROR = "error"               # {code, message}
 # Item-mode messages
 ITEM_ACQUIRED = "item_acquired"   # {player_id, slot, item, t_ms}
-ITEM_USED = "item_used"           # {by, item, target_id?, t_ms}
+ITEM_USED = "item_used"           # {by, item, target_id?, slot, t_ms}
 EFFECT_START = "effect_start"     # {target_id, effect, until_ms, hint?, t_ms}
 EFFECT_END = "effect_end"         # {target_id, effect, t_ms}
 BOARD_UPDATE = "board_update"     # {target_id, board, t_ms} — after shuffle

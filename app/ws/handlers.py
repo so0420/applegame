@@ -494,6 +494,7 @@ async def _handle_use_item(
         by=player.id,
         item=item,
         target_id=payload.get("target_id"),
+        slot=slot,
         t_ms=t_ms,
     )
     await broadcast(room, used_msg)
