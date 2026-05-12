@@ -277,14 +277,15 @@ def test_big_clear_grants_item_instantly():
 
 
 def test_combo_three_consecutive_clears_grants_item():
-    """Three consecutive small clears within the 0.3s window granted on
-    the third clear, then combo resets to 0."""
+    """Three consecutive small clears within window grant an item on
+    the third, set combo back to 0, and flag combo_triggered so the
+    client can show the '콤보 3: 아이템 지급됨' notice."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
         # Pre-arm: pretend two prior clears already landed inside the
         # window, so the next small clear becomes the 3rd combo step.
         room.players[host_id].combo_count = 2
-        room.players[host_id].last_score_ts = time.time()  # within 0.3s
+        room.players[host_id].last_score_ts = time.time()
         room.golden[host_id] = set()                       # no golden noise
         # 2-cell clear (under BIG_CLEAR_CELLS) so only combo can trigger
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
@@ -293,9 +294,27 @@ def test_combo_three_consecutive_clears_grants_item():
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         clear = _drain_until(host, "clear")
         assert clear["combo"] == 0       # reset right after the drop
+        assert clear["combo_triggered"] is True
         acq = _drain_until(host, "item_acquired")
         assert acq["item"] in ("hint", "double", "blind", "shuffle")
         assert room.players[host_id].combo_count == 0
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_combo_below_threshold_does_not_set_triggered():
+    """A non-threshold clear must have combo_triggered=False."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        room.golden[host_id] = set()
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        clear = _drain_until(host, "clear")
+        assert clear["combo"] == 1
+        assert clear["combo_triggered"] is False
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)

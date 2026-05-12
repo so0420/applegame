@@ -21,9 +21,7 @@
       <button class="inv-slot mobile" data-slot="1" type="button" aria-label="아이템 2"></button>
       <button class="inv-slot mobile" data-slot="2" type="button" aria-label="아이템 3"></button>
     </div>
-    <div class="mobile-combo" id="mobileCombo" hidden>
-      🔥 <span id="mobileComboCount">1</span>
-    </div>
+    <div class="mobile-combo" id="mobileCombo" hidden></div>
   </div>
   <!-- Vertical timer bar pinned to the right edge of the viewport -->
   <div id="verticalProgress" class="vertical-progress">
@@ -129,13 +127,6 @@
         <p id="copyToast" class="copy-toast" hidden></p>
       </div>
 
-      <div class="section">
-        <h3>내 닉네임</h3>
-        <div class="field">
-          <input id="nickInput" maxlength="20" placeholder="닉네임 (최대 20자)" autocomplete="off">
-        </div>
-      </div>
-
       <div class="section" id="capacitySection" hidden>
         <h3>최대 인원</h3>
         <div class="capacity-control">
@@ -192,10 +183,7 @@
           <div id="itemToast" class="bar-toast item-toast" hidden></div>
           <div id="attackToast" class="bar-toast attack-toast" hidden></div>
         </div>
-        <div class="combo-badge" id="comboBadge" hidden>
-          <span class="combo-icon">🔥</span>
-          <span class="combo-text">콤보 <strong id="comboCount">1</strong></span>
-        </div>
+        <div class="combo-badge" id="comboBadge" hidden></div>
         <div class="inventory" id="inventory" hidden>
           <button class="inv-slot" data-slot="0" type="button" aria-label="아이템 슬롯 1"></button>
           <button class="inv-slot" data-slot="1" type="button" aria-label="아이템 슬롯 2"></button>

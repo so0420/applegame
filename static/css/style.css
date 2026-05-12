@@ -420,14 +420,43 @@ button.ghost:hover {
   border-radius: 10px;
   margin-bottom: 8px;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   font-size: 15px;
+  gap: 8px;
+}
+.lobby-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nick-edit-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+  padding: 4px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.nick-edit-btn:hover {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.nick-edit-input {
+  flex: 1;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 15px;
+  min-width: 0;
 }
 #playerList li.host::after {
   content: "방장";
   color: var(--warn);
   font-size: 12px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 .lobby-actions {
   display: flex;
@@ -927,6 +956,12 @@ button.ghost:hover {
 .combo-badge .combo-icon { font-size: 14px; }
 .combo-badge strong { font-variant-numeric: tabular-nums; font-size: 14px; }
 .combo-badge.pulse { animation: combo-pulse 0.3s ease-out; }
+.combo-badge.triggered {
+  background: linear-gradient(135deg, #66bb6a, #2e7d32);
+  box-shadow: 0 2px 10px rgba(46, 125, 50, 0.5);
+  font-size: 13px;
+  padding: 6px 14px;
+}
 @keyframes combo-pulse {
   0%   { transform: scale(1); }
   40%  { transform: scale(1.18); }

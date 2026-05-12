@@ -320,23 +320,45 @@ $("cornerDrawerBtn").addEventListener("click", () => {
 });
 $("cornerHomeBtn").addEventListener("click", () => leaveAndGoHome());
 
-const nickInput = $("nickInput");
-nickInput.addEventListener("change", commitNickname);
-nickInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    nickInput.blur();
-  }
-});
+// In-place nickname editing inside the lobby player list. Replaces the
+// dedicated "내 닉네임" section that used to sit above the list.
+function beginNicknameEdit(li, nameSpan) {
+  if (li.querySelector("input.nick-edit-input")) return;  // already editing
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "nick-edit-input";
+  input.maxLength = 20;
+  input.value = state.myName;
+  input.autocomplete = "off";
+  input.placeholder = "닉네임";
 
-function commitNickname() {
-  const v = nickInput.value.trim().slice(0, 20);
-  if (!v || v === state.myName) {
-    nickInput.value = state.myName;
-    return;
-  }
-  state.ws?.send("rename", { nickname: v });
-  state.myName = v;
+  const commit = () => {
+    const v = input.value.trim().slice(0, 20);
+    if (v && v !== state.myName) {
+      state.ws?.send("rename", { nickname: v });
+      state.myName = v;
+      nameSpan.textContent = v + " (나)";
+    }
+    li.replaceChild(nameSpan, input);
+  };
+  const cancel = () => {
+    li.replaceChild(nameSpan, input);
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      input.removeEventListener("blur", commit);
+      cancel();
+    }
+  });
+  input.addEventListener("blur", commit);
+
+  li.replaceChild(input, nameSpan);
+  input.focus();
+  input.select();
 }
 
 $("copyCodeBtn").addEventListener("click", () => {
@@ -417,7 +439,6 @@ function resetState() {
   state.miniRenderers.clear();
   state.lbItems.clear();
   $("lbList").innerHTML = "";
-  $("nickInput").value = "";
   $("progressFill").style.width = "0%";
   $("verticalProgressFill").style.width = "0%";
   $("miniScore").textContent = "0";
@@ -448,10 +469,7 @@ function bindSocket(ws) {
     state.playerId = m.player_id;
     onRoomUpdate(m.room);
     const me = m.room.players.find((p) => p.id === state.playerId);
-    if (me) {
-      state.myName = me.nickname;
-      nickInput.value = me.nickname;
-    }
+    if (me) state.myName = me.nickname;
   });
 
   ws.addEventListener("msg:peer_joined", (e) => {
@@ -474,10 +492,7 @@ function bindSocket(ws) {
     if (!state.room) return;
     const p = state.room.players.find((x) => x.id === player_id);
     if (p) p.nickname = nickname;
-    if (player_id === state.playerId) {
-      state.myName = nickname;
-      if (document.activeElement !== nickInput) nickInput.value = nickname;
-    }
+    if (player_id === state.playerId) state.myName = nickname;
     const item = state.lbItems.get(player_id);
     if (item) item.nameEl.textContent = nickname + (player_id === state.playerId ? " (me)" : "");
     renderLobby();
@@ -623,10 +638,10 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:clear", (e) => {
-    const { cells, scores, player_id, t_ms, combo } = e.detail;
+    const { cells, scores, player_id, t_ms, combo, combo_triggered } = e.detail;
     state.events.push({ kind: "clear", t_ms: t_ms ?? 0, player_id, cells });
     if (player_id === state.playerId && state.variant === "items") {
-      setCombo(combo ?? 0);
+      setCombo(combo ?? 0, !!combo_triggered);
     }
     if (player_id === state.playerId) {
       // Server confirmation of my own submit. Pop the matching pending
@@ -699,7 +714,6 @@ function onReconnected(m) {
   const me = m.room.players.find((p) => p.id === state.playerId);
   if (me) {
     state.myName = me.nickname;
-    nickInput.value = me.nickname;
     state.inventory = Array.isArray(me.inventory)
       ? [me.inventory[0] ?? null, me.inventory[1] ?? null, me.inventory[2] ?? null]
       : [null, null, null];
@@ -921,13 +935,38 @@ function clearAllEffectVisuals() {
   setCombo(0);
 }
 
-function setCombo(n) {
+function setCombo(n, triggered = false) {
   state.combo = n;
   const badge = $("comboBadge");
   const mob = $("mobileCombo");
+  clearTimeout(state._comboMessageTimer);
+  badge.classList.remove("triggered");
+  if (triggered) {
+    badge.textContent = "🎁 콤보 3: 아이템 지급됨";
+    mob.textContent = "🎁 콤보 3";
+    badge.classList.add("triggered");
+    badge.hidden = false;
+    mob.hidden = false;
+    badge.classList.remove("pulse");
+    void badge.offsetWidth;
+    badge.classList.add("pulse");
+    // After 2s, fall back to the post-trigger combo value (which is 0,
+    // i.e. hide the badge).
+    state._comboMessageTimer = setTimeout(() => {
+      badge.classList.remove("triggered");
+      if (state.combo > 0) {
+        badge.textContent = `🔥 콤보 ${state.combo}`;
+        mob.textContent = `🔥 ${state.combo}`;
+      } else {
+        badge.hidden = true;
+        mob.hidden = true;
+      }
+    }, 2000);
+    return;
+  }
   if (n > 0) {
-    $("comboCount").textContent = String(n);
-    $("mobileComboCount").textContent = String(n);
+    badge.textContent = `🔥 콤보 ${n}`;
+    mob.textContent = `🔥 ${n}`;
     badge.hidden = false;
     mob.hidden = false;
     badge.classList.remove("pulse");
@@ -1015,11 +1054,27 @@ function renderLobby() {
   if (!state.room) return;
   const list = $("playerList");
   list.innerHTML = "";
+  const canRenameMe = state.mode !== "random";  // random matches stay anonymous
   for (const p of state.room.players) {
     const li = document.createElement("li");
     if (p.id === state.hostId) li.classList.add("host");
-    const me = p.id === state.playerId ? " (나)" : "";
-    li.innerHTML = `<span>${escapeHtml(p.nickname)}${me}</span><span></span>`;
+    const isMe = p.id === state.playerId;
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "lobby-name";
+    nameSpan.textContent = p.nickname + (isMe ? " (나)" : "");
+    li.appendChild(nameSpan);
+
+    if (isMe && canRenameMe) {
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "nick-edit-btn";
+      editBtn.setAttribute("aria-label", "닉네임 변경");
+      editBtn.textContent = "✎";
+      editBtn.addEventListener("click", () => beginNicknameEdit(li, nameSpan));
+      li.appendChild(editBtn);
+    } else {
+      li.appendChild(document.createElement("span"));  // spacer for grid
+    }
     list.appendChild(li);
   }
   const cnt = state.room.players.length;
@@ -1058,9 +1113,8 @@ function renderLobby() {
       : `호스트가 모드를 정합니다 (현재 ${state.variant === "items" ? "아이템전" : "클래식"})`;
   }
 
-  // Nickname input: hidden in random match (anonymous)
-  const nickSection = nickInput.closest(".section");
-  if (nickSection) nickSection.hidden = (state.mode === "random");
+  // Nickname editing in the player list is gated on state.mode in
+  // renderLobby's player loop — nothing extra to do here for random.
 
   if (state.mode === "friend") {
     if (cnt < 2) {
