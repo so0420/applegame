@@ -1,16 +1,7 @@
-# Python
 __pycache__/
-*.py[cod]
-*.egg-info/
+*.pyc
 .venv/
-venv/
 .pytest_cache/
-
-# Logs / artifacts
 *.log
-pytest_output.txt
-
-# IDE
-.idea/
-.vscode/
-.DS_Store
+# Hack samples that may have been dropped here for analysis
+manifest.zip
