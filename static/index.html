@@ -16,6 +16,10 @@
       <span class="dot">·</span>
       <span id="miniTimer">2:00</span>
     </div>
+    <div class="mobile-inventory" id="mobileInventory" hidden>
+      <button class="inv-slot mobile" data-slot="0" type="button" aria-label="아이템 1"></button>
+      <button class="inv-slot mobile" data-slot="1" type="button" aria-label="아이템 2"></button>
+    </div>
   </div>
   <!-- Vertical timer bar pinned to the right edge of the viewport -->
   <div id="verticalProgress" class="vertical-progress">
@@ -90,6 +94,15 @@
         <p class="helper" id="capacityHelper">호스트만 변경할 수 있습니다 (2~50명)</p>
       </div>
 
+      <div class="section" id="variantSection" hidden>
+        <h3>게임 방식</h3>
+        <div class="variant-toggle">
+          <button class="variant-btn active" data-variant="classic" type="button">클래식</button>
+          <button class="variant-btn" data-variant="items" type="button">아이템전</button>
+        </div>
+        <p class="helper" id="variantHelper">아이템전: 황금 사과를 포함해 합10을 만들면 랜덤 아이템 획득</p>
+      </div>
+
       <div class="section">
         <h3>참가자 <span class="muted" id="playerCount">0 / 2</span></h3>
         <p id="lobbyMsg" class="muted" style="text-align:center;">상대를 기다리는 중입니다.</p>
@@ -124,11 +137,17 @@
           <strong id="myRank">#1</strong>
           <span class="muted">/ <span id="totalPlayers">1</span></span>
         </div>
+        <div class="inventory" id="inventory" hidden>
+          <button class="inv-slot" data-slot="0" type="button" aria-label="아이템 슬롯 1"></button>
+          <button class="inv-slot" data-slot="1" type="button" aria-label="아이템 슬롯 2"></button>
+        </div>
         <div class="game-stat">
           <span class="muted">⏱</span>
           <strong id="timer">2:00</strong>
         </div>
       </header>
+      <div id="itemToast" class="item-toast" hidden></div>
+      <div id="attackToast" class="attack-toast" hidden></div>
       <div class="progress" id="topProgress">
         <div class="progress-fill" id="progressFill"></div>
       </div>

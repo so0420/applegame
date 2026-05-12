@@ -23,6 +23,10 @@ const ME_STROKE = "#1976d2";
 const ME_STROKE_OK = "#2e7d32";
 const OPP_BOX = "rgba(198, 40, 40, 0.18)";
 const OPP_STROKE = "#c62828";
+const GOLD = "#f6c244";
+const GOLD_DARK = "#c98a10";
+const HINT_FILL = "rgba(255, 235, 59, 0.55)";
+const HINT_STROKE = "#fbc02d";
 
 export class BoardRenderer {
   constructor(canvas, options = {}) {
@@ -38,6 +42,11 @@ export class BoardRenderer {
     this.dpr = Math.max(1, window.devicePixelRatio || 1);
     this._fadingCells = []; // [{r,c,start,duration}]
     this._raf = null;
+    // Item-mode state
+    this.goldenCells = new Set();   // "r,c" keys
+    this.blind = false;             // hide numeric values
+    this.hintCells = null;          // [[r,c], ...]
+    this._shakeUntil = 0;
     window.addEventListener("resize", () => this.resize());
     // Catch parent layout changes too (media-query breakpoints,
     // sidebar appearing, etc.) — without this, click coords go stale
@@ -54,14 +63,45 @@ export class BoardRenderer {
     this.render();
   }
 
+  setGolden(r, c, on) {
+    const key = `${r},${c}`;
+    if (on) this.goldenCells.add(key);
+    else this.goldenCells.delete(key);
+    this.render();
+  }
+
+  clearGolden() {
+    if (this.goldenCells.size === 0) return;
+    this.goldenCells.clear();
+    this.render();
+  }
+
+  setBlind(on) {
+    if (this.blind === on) return;
+    this.blind = on;
+    this.render();
+  }
+
+  setHint(cells) {
+    this.hintCells = cells && cells.length ? cells.slice() : null;
+    this.render();
+  }
+
+  shakeOnce() {
+    this._shakeUntil = performance.now() + 600;
+    this._scheduleAnim();
+  }
+
   clearCells(cells) {
     if (!this.board) return;
     const now = performance.now();
     for (const [r, c] of cells) {
       const v = this.board[r][c];
       if (v === 0) continue;  // already cleared (e.g. optimistic apply)
-      this._fadingCells.push({ r, c, value: v, start: now, duration: 100 });
+      const isGold = this.goldenCells.has(`${r},${c}`);
+      this._fadingCells.push({ r, c, value: v, start: now, duration: 100, gold: isGold });
       this.board[r][c] = 0;
+      this.goldenCells.delete(`${r},${c}`);
     }
     this._scheduleAnim();
   }
@@ -70,7 +110,10 @@ export class BoardRenderer {
   // arbitrary points in the timeline without queuing animations.
   applyClear(cells) {
     if (!this.board) return;
-    for (const [r, c] of cells) this.board[r][c] = 0;
+    for (const [r, c] of cells) {
+      this.board[r][c] = 0;
+      this.goldenCells.delete(`${r},${c}`);
+    }
     this.render();
   }
 
@@ -210,6 +253,33 @@ export class BoardRenderer {
 
     if (!this.board) return;
 
+    // Shake transform for shuffle effect
+    const now = performance.now();
+    let shaking = false;
+    if (this._shakeUntil > now) {
+      shaking = true;
+      const tLeft = (this._shakeUntil - now) / 600;
+      const mag = Math.max(2, cs * 0.08) * tLeft;
+      const dx = (Math.random() * 2 - 1) * mag;
+      const dy = (Math.random() * 2 - 1) * mag;
+      ctx.save();
+      ctx.translate(dx, dy);
+    }
+
+    // Hint highlight (under apples so they remain readable)
+    if (this.hintCells) {
+      for (const [r, c] of this.hintCells) {
+        const x = pad + c * cs;
+        const y = pad + r * cs;
+        ctx.fillStyle = HINT_FILL;
+        ctx.strokeStyle = HINT_STROKE;
+        ctx.lineWidth = 2;
+        this._roundedRect(x + 1, y + 1, cs - 2, cs - 2, 4);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
     // Apples
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
@@ -221,19 +291,19 @@ export class BoardRenderer {
           this._roundedRect(x + 2, y + 2, cs - 4, cs - 4, 4);
           ctx.fill();
         } else {
-          this._drawApple(x, y, cs, v, 1.0);
+          const gold = this.goldenCells.has(`${r},${c}`);
+          this._drawApple(x, y, cs, v, 1.0, 1.0, { gold, hideNumber: this.blind });
         }
       }
     }
 
     // Fading (recently cleared) apples
-    const now = performance.now();
     this._fadingCells = this._fadingCells.filter((f) => {
       const t = (now - f.start) / f.duration;
       if (t >= 1) return false;
       const x = pad + f.c * cs;
       const y = pad + f.r * cs;
-      this._drawApple(x, y, cs, f.value, 1 - t, 1 + t * 0.4);
+      this._drawApple(x, y, cs, f.value, 1 - t, 1 + t * 0.4, { gold: f.gold, hideNumber: this.blind });
       return true;
     });
 
@@ -247,41 +317,76 @@ export class BoardRenderer {
       const stroke = sum === 10 ? ME_STROKE_OK : ME_STROKE;
       this._drawDragRect(this.myDrag, color, stroke);
     }
+
+    if (shaking) ctx.restore();
+    if (this._shakeUntil > now) this._scheduleAnim();
   }
 
-  _drawApple(x, y, cs, value, alpha = 1, scale = 1) {
+  _drawApple(x, y, cs, value, alpha = 1, scale = 1, opts = {}) {
     const ctx = this.ctx;
     const cx = x + cs / 2;
     const cy = y + cs / 2;
     const margin = this.mini ? 0.5 : 2;
     const r = (cs / 2 - margin) * scale;
+    const gold = !!opts.gold;
+    const hideNumber = !!opts.hideNumber;
     ctx.save();
     ctx.globalAlpha = alpha;
     if (this.mini) {
-      // Flat red dot, no stem, no number
-      ctx.fillStyle = APPLE_RED;
+      ctx.fillStyle = gold ? GOLD : APPLE_RED;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
+      if (gold) {
+        ctx.strokeStyle = GOLD_DARK;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     } else {
       const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.2, cx, cy, r);
-      grad.addColorStop(0, APPLE_RED);
-      grad.addColorStop(1, APPLE_DARK);
+      if (gold) {
+        grad.addColorStop(0, "#fff7c2");
+        grad.addColorStop(0.55, GOLD);
+        grad.addColorStop(1, GOLD_DARK);
+      } else {
+        grad.addColorStop(0, APPLE_RED);
+        grad.addColorStop(1, APPLE_DARK);
+      }
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "#5d4037";
+      // Gold halo
+      if (gold) {
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.strokeStyle = GOLD_DARK;
+        ctx.lineWidth = Math.max(2, cs * 0.08);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.strokeStyle = gold ? "#8b6900" : "#5d4037";
       ctx.lineWidth = Math.max(1.5, cs * 0.06);
       ctx.beginPath();
       ctx.moveTo(cx, cy - r);
       ctx.lineTo(cx + r * 0.15, cy - r - r * 0.18);
       ctx.stroke();
-      ctx.fillStyle = TEXT_COLOR;
-      ctx.font = `bold ${Math.floor(cs * 0.5)}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(value), cx, cy + 1);
+      if (!hideNumber) {
+        ctx.fillStyle = gold ? "#3a2a00" : TEXT_COLOR;
+        ctx.font = `bold ${Math.floor(cs * 0.5)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(value), cx, cy + 1);
+      } else {
+        // Blind: faint placeholder so the apple still looks "occupied"
+        ctx.fillStyle = "rgba(255,255,255,0.7)";
+        ctx.font = `bold ${Math.floor(cs * 0.5)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("?", cx, cy + 1);
+      }
     }
     ctx.restore();
   }

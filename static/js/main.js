@@ -35,6 +35,7 @@ const state = {
   myName: "나",
   hostId: null,
   mode: null,
+  variant: "classic",
   intent: null,
   bigRenderer: null,
   miniRenderers: new Map(),
@@ -53,6 +54,17 @@ const state = {
   gameWinnerId: null,
   matchDeadlineMs: null,
   matchTickerId: null,
+  // Item-mode local state
+  inventory: [null, null],
+  effects: { double: 0, blind: 0, hint: 0 },  // expiry ms
+  effectTimers: {},
+};
+
+const ITEM_META = {
+  hint:    { icon: "🔍", label: "힌트",  attack: false, desc: "내 보드에 합10 쌍 강조 (3초)" },
+  double:  { icon: "⚡", label: "2배 점수", attack: false, desc: "내 점수 8초간 2배" },
+  blind:   { icon: "🙈", label: "숫자 숨김", attack: true, desc: "상대 1명 숫자 3초 가림" },
+  shuffle: { icon: "🔀", label: "셔플", attack: true, desc: "상대 1명 보드 재배치" },
 };
 
 const sumBadge = $("sumBadge");
@@ -217,6 +229,30 @@ capacityInput.addEventListener("keydown", (e) => {
   }
 });
 
+// ---- Lobby variant toggle (host only, friend mode) ----
+document.querySelectorAll(".variant-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (btn.disabled) return;
+    const v = btn.dataset.variant;
+    if (!v || v === state.variant) return;
+    state.ws?.send("set_variant", { variant: v });
+  });
+});
+
+// ---- Inventory click ----
+document.querySelectorAll(".inv-slot").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const slot = parseInt(btn.dataset.slot, 10);
+    if (!Number.isInteger(slot)) return;
+    if (!state.inventory[slot]) return;
+    if (btn.classList.contains("locked")) {
+      showItemToast("⏳ 마지막 10초엔 공격 아이템을 쓸 수 없어요");
+      return;
+    }
+    state.ws?.send("use_item", { slot });
+  });
+});
+
 // Join screen
 $("joinBackBtn").addEventListener("click", () => show("home"));
 $("joinSubmit").addEventListener("click", () => submitJoinCode());
@@ -360,6 +396,12 @@ function resetState() {
   state.focusedPlayerId = null;
   state.gameWinnerId = null;
   state.matchDeadlineMs = null;
+  state.variant = "classic";
+  state.inventory = [null, null];
+  state.effects = { double: 0, blind: 0, hint: 0 };
+  $("inventory").hidden = true;
+  $("mobileInventory").hidden = true;
+  document.querySelectorAll(".board-effect-overlay").forEach((el) => el.remove());
   if (state.matchTickerId) {
     clearInterval(state.matchTickerId);
     state.matchTickerId = null;
@@ -440,6 +482,105 @@ function bindSocket(ws) {
       capacityInput.value = String(cap);
     }
     renderLobby();
+  });
+
+  ws.addEventListener("msg:variant_changed", (e) => {
+    state.variant = e.detail.variant || "classic";
+    if (state.room) state.room.variant = state.variant;
+    renderLobby();
+  });
+
+  ws.addEventListener("msg:golden_spawn", (e) => {
+    const { player_id, r, c } = e.detail;
+    const mini = state.miniRenderers.get(player_id);
+    mini?.setGolden(r, c, true);
+    if (player_id === state.focusedPlayerId) {
+      state.bigRenderer.setGolden(r, c, true);
+    }
+  });
+
+  ws.addEventListener("msg:item_acquired", (e) => {
+    const { slot, item } = e.detail;
+    state.inventory[slot] = item;
+    renderInventory();
+    const meta = ITEM_META[item];
+    if (meta) showItemToast(`${meta.icon} ${meta.label} 획득!`);
+  });
+
+  ws.addEventListener("msg:item_used", (e) => {
+    const { by, item, target_id } = e.detail;
+    const meta = ITEM_META[item];
+    if (!meta) return;
+    const byPlayer = state.room?.players.find((p) => p.id === by);
+    const byName = byPlayer?.nickname ?? "?";
+    if (by === state.playerId) {
+      showItemToast(`${meta.icon} ${meta.label} 사용`);
+    } else if (target_id === state.playerId && meta.attack) {
+      showAttackToast(`${byName}님이 ${meta.icon} ${meta.label}!`);
+    } else if (meta.attack && target_id) {
+      const target = state.room?.players.find((p) => p.id === target_id);
+      const tName = target?.nickname ?? "?";
+      showItemToast(`${byName} → ${tName} (${meta.icon} ${meta.label})`);
+    }
+  });
+
+  ws.addEventListener("msg:effect_start", (e) => {
+    const { target_id, effect, until_ms, hint } = e.detail;
+    if (target_id === state.playerId) {
+      if (effect === "double") {
+        state.effects.double = until_ms;
+        showBoardEffect("double", until_ms - Date.now());
+      } else if (effect === "blind") {
+        state.effects.blind = until_ms;
+        state.bigRenderer.setBlind(true);
+        state.miniRenderers.get(state.playerId)?.setBlind(true);
+        showBoardEffect("blind", until_ms - Date.now());
+      } else if (effect === "hint" && Array.isArray(hint)) {
+        const cells = hint.map((h) => [h.r, h.c]);
+        state.bigRenderer.setHint(cells);
+        state.miniRenderers.get(state.playerId)?.setHint(cells);
+      }
+    } else if (effect === "blind") {
+      const mini = state.miniRenderers.get(target_id);
+      mini?.setBlind(true);
+      if (target_id === state.focusedPlayerId) state.bigRenderer.setBlind(true);
+    }
+  });
+
+  ws.addEventListener("msg:effect_end", (e) => {
+    const { target_id, effect } = e.detail;
+    if (effect === "double" && target_id === state.playerId) {
+      state.effects.double = 0;
+      hideBoardEffect("double");
+    } else if (effect === "blind") {
+      if (target_id === state.playerId) state.effects.blind = 0;
+      const mini = state.miniRenderers.get(target_id);
+      mini?.setBlind(false);
+      if (target_id === state.focusedPlayerId || target_id === state.playerId) {
+        state.bigRenderer.setBlind(false);
+      }
+      if (target_id === state.playerId) hideBoardEffect("blind");
+    } else if (effect === "hint") {
+      state.bigRenderer.setHint(null);
+      state.miniRenderers.get(state.playerId)?.setHint(null);
+    }
+  });
+
+  ws.addEventListener("msg:board_update", (e) => {
+    const { target_id, board } = e.detail;
+    const mini = state.miniRenderers.get(target_id);
+    mini?.setBoard(board);
+    // After shuffle, the previously known golden cells may no longer
+    // correspond to the same values; server still considers them golden.
+    if (target_id === state.focusedPlayerId) {
+      state.bigRenderer.setBoard(board);
+      state.bigRenderer.shakeOnce?.();
+    }
+    if (target_id === state.playerId) {
+      state.bigRenderer.shakeOnce?.();
+      showBoardEffect("shuffle", 600);
+      setTimeout(() => hideBoardEffect("shuffle"), 600);
+    }
   });
 
   ws.addEventListener("msg:queued", (e) => {
@@ -597,7 +738,11 @@ function onReconnected(m) {
   if (me) {
     state.myName = me.nickname;
     nickInput.value = me.nickname;
+    state.inventory = Array.isArray(me.inventory)
+      ? [me.inventory[0] ?? null, me.inventory[1] ?? null]
+      : [null, null];
   }
+  renderInventory();
 
   // Build leaderboard, then set each player's current board state
   buildLeaderboard();
@@ -637,11 +782,89 @@ function onReconnected(m) {
   }
 }
 
+// ---- Inventory / toast / effects ----
+function renderInventory() {
+  const visible = state.variant === "items";
+  $("inventory").hidden = !visible;
+  $("mobileInventory").hidden = !visible;
+  const remaining = state.endsAt ? state.endsAt - Date.now() : 0;
+  const locked = remaining > 0 && remaining <= 10_000;
+  for (const btn of document.querySelectorAll(".inv-slot")) {
+    const slot = parseInt(btn.dataset.slot, 10);
+    const item = state.inventory[slot];
+    if (item && ITEM_META[item]) {
+      btn.classList.add("has-item");
+      btn.textContent = ITEM_META[item].icon;
+      btn.title = `${ITEM_META[item].label} — ${ITEM_META[item].desc}`;
+      const isAttack = ITEM_META[item].attack;
+      btn.classList.toggle("locked", isAttack && locked);
+    } else {
+      btn.classList.remove("has-item", "locked");
+      btn.textContent = "";
+      btn.title = "";
+    }
+  }
+}
+
+let _itemToastTimer = null;
+function showItemToast(msg) {
+  const el = $("itemToast");
+  el.textContent = msg;
+  el.hidden = false;
+  // Reflow so the opacity transition restarts when called rapidly
+  void el.offsetWidth;
+  el.classList.add("show");
+  clearTimeout(_itemToastTimer);
+  _itemToastTimer = setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => { el.hidden = true; }, 220);
+  }, 1800);
+}
+
+let _attackToastTimer = null;
+function showAttackToast(msg) {
+  const el = $("attackToast");
+  el.textContent = msg;
+  el.hidden = false;
+  void el.offsetWidth;
+  el.classList.add("show");
+  clearTimeout(_attackToastTimer);
+  _attackToastTimer = setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => { el.hidden = true; }, 220);
+  }, 2500);
+}
+
+function showBoardEffect(kind, durationMs) {
+  let el = document.querySelector(`.board-effect-overlay.${kind}`);
+  if (!el) {
+    el = document.createElement("div");
+    el.className = `board-effect-overlay ${kind}`;
+    const labels = { double: "×2 SCORE", blind: "🙈 숫자 숨김", shuffle: "🔀 SHUFFLE" };
+    el.textContent = labels[kind] || "";
+    document.querySelector(".board-area").appendChild(el);
+  }
+  el.hidden = false;
+  void el.offsetWidth;
+  el.classList.add("show");
+}
+
+function hideBoardEffect(kind) {
+  const el = document.querySelector(`.board-effect-overlay.${kind}`);
+  if (!el) return;
+  el.classList.remove("show");
+  setTimeout(() => { el.remove(); }, 220);
+}
+
 // ---- Game lifecycle ----
 function onGameStart(m) {
   state.endsAt = m.ends_at * 1000;
   state.startedAt = state.endsAt - GAME_DURATION_MS;
   state.events = [];
+  state.variant = m.variant || state.variant || "classic";
+  state.inventory = [null, null];
+  state.effects = { double: 0, blind: 0, hint: 0 };
+  renderInventory();
   // Match countdown done — clear it
   state.matchDeadlineMs = null;
   if (state.matchTickerId) {
@@ -660,6 +883,9 @@ function onGameStart(m) {
 
   state.bigRenderer.setBoard(m.board);
   state.bigRenderer.setMyDrag(null);
+  state.bigRenderer.clearGolden();
+  state.bigRenderer.setBlind(false);
+  state.bigRenderer.setHint(null);
 
   buildLeaderboard();
   // Default focus = me
@@ -680,6 +906,7 @@ function onRoomUpdate(room) {
   state.room = { ...room, players: [...room.players] };
   state.hostId = room.host_id;
   state.mode = room.mode;
+  state.variant = room.variant || "classic";
   $("roomCode").textContent = room.id;
   $("roomCodeSection").hidden = (room.mode === "solo" || room.mode === "random");
   renderLobby();
@@ -715,6 +942,21 @@ function renderLobby() {
     $("capacityHelper").textContent = isHost
       ? `2~50명 사이로 직접 입력 (현재 인원 ${cnt}명 미만으로는 줄일 수 없음)`
       : `호스트가 설정합니다 (현재 ${cap}명)`;
+  }
+
+  // Variant section: visible only in friend mode
+  const showVariant = state.mode === "friend";
+  $("variantSection").hidden = !showVariant;
+  if (showVariant) {
+    document.querySelectorAll(".variant-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.variant === state.variant);
+      b.disabled = !isHost;
+    });
+    $("variantHelper").textContent = isHost
+      ? (state.variant === "items"
+          ? "황금 사과를 합10에 포함시키면 랜덤 아이템 (🔍힌트 ⚡2배 🙈숨김 🔀셔플) 획득"
+          : "원하면 아이템전으로 바꿔보세요")
+      : `호스트가 모드를 정합니다 (현재 ${state.variant === "items" ? "아이템전" : "클래식"})`;
   }
 
   // Nickname input: hidden in random match (anonymous)
@@ -863,6 +1105,7 @@ function reorderAndRankLeaderboard(scoresOverride = null) {
 // ---- Timer / Progress ----
 function startTimer() {
   if (state.timerInterval) clearInterval(state.timerInterval);
+  let prevLocked = null;
   const tick = () => {
     const remaining = Math.max(0, state.endsAt - Date.now());
     const sec = Math.ceil(remaining / 1000);
@@ -874,6 +1117,14 @@ function startTimer() {
     el.classList.toggle("warn", sec <= 30 && sec > 10);
     el.classList.toggle("danger", sec <= 10);
     $("miniTimer").textContent = text;
+    // Refresh inventory lock state when we cross the 10s threshold
+    if (state.variant === "items") {
+      const locked = remaining > 0 && remaining <= 10_000;
+      if (locked !== prevLocked) {
+        prevLocked = locked;
+        renderInventory();
+      }
+    }
     if (remaining <= 0 && state.timerInterval) {
       clearInterval(state.timerInterval);
       state.timerInterval = null;
