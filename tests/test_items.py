@@ -276,15 +276,15 @@ def test_big_clear_grants_item_instantly():
         g_ctx.__exit__(None, None, None)
 
 
-def test_combo_three_consecutive_clears_grants_item():
-    """Three consecutive small clears within window grant an item on
-    the third, set combo back to 0, and flag combo_triggered for the
-    in-place 'colon 3: 아이템 지급됨' badge swap."""
+def test_combo_threshold_clears_grant_item():
+    """Reaching the COMBO_THRESHOLD-th consecutive in-window clear grants
+    an item and flags combo_triggered so the badge can swap to the
+    'aitem 지급됨' pill."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
-        # Pre-arm: pretend two prior clears already landed inside the
-        # window, so the next small clear becomes the 3rd combo step.
-        room.players[host_id].combo_count = 2
+        # Pre-arm: pretend THRESHOLD-1 prior clears already landed inside
+        # the window, so the next small clear is the threshold step.
+        room.players[host_id].combo_count = 4
         room.players[host_id].last_score_ts = time.time()
         room.golden[host_id] = set()                       # no golden noise
         # 2-cell clear (under BIG_CLEAR_CELLS) so only combo can trigger
@@ -375,8 +375,8 @@ def test_simultaneous_triggers_grant_only_one_item():
             room.boards[host_id][0][c] = 2
         # Make (0,0) golden (golden ✓).
         room.golden[host_id] = {(0, 0)}
-        # Prearm combo to 2 within window (combo will hit 3 ✓).
-        room.players[host_id].combo_count = 2
+        # Prearm combo so this clear becomes the threshold step.
+        room.players[host_id].combo_count = 4
         room.players[host_id].last_score_ts = time.time()
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 4})
         clear = _drain_until(host, "clear")

@@ -973,14 +973,16 @@ function setCombo(n, triggered = false) {
     return;
   }
 
-  // Normal path — mirrors 077014c except for the sibling reset.
+  // Normal path. Only surface a real chain (n ≥ 2). A fresh n=1 means
+  // either game start or a window-break, which the player doesn't care
+  // to see as "콤보 1".
   badge.classList.remove("triggered");
   badgeTrigger.hidden = true;
   icon.hidden = false;
   text.hidden = false;
   mobTrigger.hidden = true;
   mobDefault.hidden = false;
-  if (n > 0) {
+  if (n >= 2) {
     $("comboCount").textContent = String(n);
     $("mobileComboCount").textContent = String(n);
     badge.hidden = false;
