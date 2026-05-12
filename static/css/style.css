@@ -899,33 +899,38 @@ button.ghost:hover {
   pointer-events: auto;
 }
 
-/* ---- Toasts ---- */
-.item-toast,
-.attack-toast {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  z-index: 30;
+/* ---- Toasts (inside game-bar, next to score — never overlaps board) ---- */
+.toast-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   pointer-events: none;
+}
+.bar-toast {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   opacity: 0;
   transition: opacity 0.2s;
 }
-.item-toast {
-  top: 70px;
+.bar-toast.show { opacity: 1; }
+.bar-toast.item-toast {
   background: rgba(26, 29, 36, 0.92);
   color: #fff8e1;
 }
-.attack-toast {
-  bottom: 12px;
+.bar-toast.attack-toast {
   background: rgba(198, 40, 40, 0.92);
   color: white;
 }
-.item-toast.show,
-.attack-toast.show { opacity: 1; }
 
 /* ---- Board effect overlays ---- */
 .board-area { position: relative; }
@@ -966,9 +971,4 @@ button.ghost:hover {
   text-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 
-/* Rotated-mode tweaks: toasts/inventory shouldn't follow the rotation */
-@media (orientation: portrait) and (max-width: 900px) {
-  body.on-game .inventory,
-  body.on-game .item-toast,
-  body.on-game .attack-toast { display: none !important; }
-}
+/* Rotated-mode: toasts live inside the (hidden) game-bar already. */
