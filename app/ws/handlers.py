@@ -317,6 +317,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         return
     item_msg: dict[str, Any] | None = None
     combo_after = 0
+    combo_triggered = False
     async with room.lock:
         if room.state != "playing":
             return
@@ -375,6 +376,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             if combo_trigger:
                 # Streak consumed by the drop, regardless of inventory fit.
                 player.combo_count = 0
+                combo_triggered = True
             combo_after = player.combo_count
 
             if golden_trigger or big_trigger or combo_trigger:
@@ -402,6 +404,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             scores=scores,
             t_ms=t_ms,
             combo=combo_after,
+            combo_triggered=combo_triggered,
         ),
     )
     if item_msg is not None:

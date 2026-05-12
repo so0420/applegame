@@ -955,7 +955,12 @@ button.ghost:hover {
 }
 .combo-badge .combo-icon { font-size: 14px; }
 .combo-badge strong { font-variant-numeric: tabular-nums; font-size: 14px; }
+.combo-badge .combo-default { display: inline-flex; align-items: center; gap: 4px; }
 .combo-badge.pulse { animation: combo-pulse 0.3s ease-out; }
+.combo-badge.triggered {
+  background: linear-gradient(135deg, #66bb6a, #2e7d32);
+  box-shadow: 0 2px 10px rgba(46, 125, 50, 0.5);
+}
 @keyframes combo-pulse {
   0%   { transform: scale(1); }
   40%  { transform: scale(1.18); }

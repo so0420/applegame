@@ -638,10 +638,10 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:clear", (e) => {
-    const { cells, scores, player_id, t_ms, combo } = e.detail;
+    const { cells, scores, player_id, t_ms, combo, combo_triggered } = e.detail;
     state.events.push({ kind: "clear", t_ms: t_ms ?? 0, player_id, cells });
     if (player_id === state.playerId && state.variant === "items") {
-      setCombo(combo ?? 0);
+      setCombo(combo ?? 0, !!combo_triggered);
     }
     if (player_id === state.playerId) {
       // Server confirmation of my own submit. Pop the matching pending
@@ -935,10 +935,47 @@ function clearAllEffectVisuals() {
   setCombo(0);
 }
 
-function setCombo(n) {
+function setCombo(n, triggered = false) {
   state.combo = n;
   const badge = $("comboBadge");
   const mob = $("mobileCombo");
+  const badgeDefault = badge.querySelector(".combo-default");
+  const badgeTrigger = badge.querySelector(".combo-trigger-msg");
+  const mobDefault = mob.querySelector(".combo-default");
+  const mobTrigger = mob.querySelector(".combo-trigger-msg");
+  clearTimeout(state._comboMessageTimer);
+
+  if (triggered) {
+    // Swap the badge's inner content to the drop notice for 2s, then
+    // fall back to the normal combo display.
+    badgeDefault.hidden = true;
+    badgeTrigger.hidden = false;
+    mobDefault.hidden = true;
+    mobTrigger.hidden = false;
+    badge.classList.add("triggered");
+    badge.hidden = false;
+    mob.hidden = false;
+    badge.classList.remove("pulse");
+    void badge.offsetWidth;
+    badge.classList.add("pulse");
+    state._comboMessageTimer = setTimeout(() => {
+      badge.classList.remove("triggered");
+      badgeTrigger.hidden = true;
+      badgeDefault.hidden = false;
+      mobTrigger.hidden = true;
+      mobDefault.hidden = false;
+      // Re-render normally so visibility tracks current state.combo
+      setCombo(state.combo, false);
+    }, 2000);
+    return;
+  }
+
+  // Normal path
+  badge.classList.remove("triggered");
+  badgeTrigger.hidden = true;
+  badgeDefault.hidden = false;
+  mobTrigger.hidden = true;
+  mobDefault.hidden = false;
   if (n > 0) {
     $("comboCount").textContent = String(n);
     $("mobileComboCount").textContent = String(n);
