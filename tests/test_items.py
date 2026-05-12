@@ -255,6 +255,105 @@ def test_clearing_golden_grants_item_and_shrinks_set():
         g_ctx.__exit__(None, None, None)
 
 
+def test_big_clear_grants_item_instantly():
+    """Clearing 4+ cells in one submit grants an item even with no golden
+    and no combo history."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # 5 cells of value 2 → sum 10 → 5 cleared
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        for c in range(5):
+            room.boards[host_id][0][c] = 2
+        # Strip goldens so only the big-clear trigger fires
+        room.golden[host_id] = set()
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 4})
+        clear = _drain_until(host, "clear")
+        assert len(clear["cells"]) == 5
+        acq = _drain_until(host, "item_acquired")
+        assert acq["item"] in ("hint", "double", "blind", "shuffle")
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_combo_three_consecutive_clears_grants_item():
+    """Three consecutive small clears within the 0.3s window granted on
+    the third clear, then combo resets to 0."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # Pre-arm: pretend two prior clears already landed inside the
+        # window, so the next small clear becomes the 3rd combo step.
+        room.players[host_id].combo_count = 2
+        room.players[host_id].last_score_ts = time.time()  # within 0.3s
+        room.golden[host_id] = set()                       # no golden noise
+        # 2-cell clear (under BIG_CLEAR_CELLS) so only combo can trigger
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        clear = _drain_until(host, "clear")
+        assert clear["combo"] == 0       # reset right after the drop
+        acq = _drain_until(host, "item_acquired")
+        assert acq["item"] in ("hint", "double", "blind", "shuffle")
+        assert room.players[host_id].combo_count == 0
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_combo_broken_when_gap_exceeds_window():
+    """A small clear long after the previous one starts a new chain at 1."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        room.players[host_id].combo_count = 2
+        room.players[host_id].last_score_ts = time.time() - 1.0  # >0.3s ago
+        room.golden[host_id] = set()
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        clear = _drain_until(host, "clear")
+        assert clear["combo"] == 1       # chain reset to 1
+        assert room.players[host_id].combo_count == 1
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_simultaneous_triggers_grant_only_one_item():
+    """A single submit that fires golden + big-clear + combo (all three at
+    once) must still drop only one item."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # 5+5+5+5+5+5+5+5+5+5 will exceed 10; we want sum 10 with 5 cells.
+        # 5 cells of value 2 sums to 10 (big-clear ✓).
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        for c in range(5):
+            room.boards[host_id][0][c] = 2
+        # Make (0,0) golden (golden ✓).
+        room.golden[host_id] = {(0, 0)}
+        # Prearm combo to 2 within window (combo will hit 3 ✓).
+        room.players[host_id].combo_count = 2
+        room.players[host_id].last_score_ts = time.time()
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 4})
+        clear = _drain_until(host, "clear")
+        assert len(clear["cells"]) == 5
+        assert clear["combo"] == 0
+        # Exactly one item_acquired should follow, then no more.
+        acq = _drain_until(host, "item_acquired")
+        assert acq["item"] in ("hint", "double", "blind", "shuffle")
+        # Confirm no second item_acquired comes through.
+        host.send_json({"type": "rename", "nickname": "ok"})
+        nxt = host.receive_json()
+        assert nxt["type"] == "renamed"
+        # And only one slot occupied
+        filled = sum(1 for s in room.players[host_id].inventory if s is not None)
+        assert filled == 1
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
 def test_clearing_non_golden_does_not_grant_item():
     """A clear that hits no golden cells produces no item_acquired msg."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()

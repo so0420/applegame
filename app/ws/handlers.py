@@ -17,9 +17,12 @@ from ..game.board import (
 )
 from ..game.room import (
     ATTACK_LOCKOUT,
+    BIG_CLEAR_CELLS,
     CAPACITY_DEFAULT,
     CAPACITY_MAX,
     CAPACITY_MIN,
+    COMBO_THRESHOLD,
+    COMBO_WINDOW_S,
     EFFECT_BLIND,
     EFFECT_DOUBLE,
     EFFECT_HINT,
@@ -313,6 +316,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
     if None in (r1, c1, r2, c2):
         return
     item_msg: dict[str, Any] | None = None
+    combo_after = 0
     async with room.lock:
         if room.state != "playing":
             return
@@ -324,6 +328,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             await send(player, S.msg(S.REJECT, reason="invalid_or_taken"))
             return
         now = time.time()
+        prev_clear_ts = player.last_score_ts
         gained = len(cells)
         # 2× multiplier — applied if the effect is still active. Bonus is
         # tracked as added apples-equivalent so the existing scoring model
@@ -344,14 +349,35 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             "cells": cells,
         })
 
-        # Golden-apple pickup → grant a random item if there's a free slot.
-        # Multiple goldens cleared in one submit still grants only one item.
+        # Three independent triggers — but the simultaneous-trigger cap
+        # means a single submit still drops at most one item.
         if room.variant == "items":
+            # --- 1. Golden apple pickup -----------------------------------
             golden_cells = room.golden.get(player.id) or set()
             consumed = [tuple(cell) for cell in cells if tuple(cell) in golden_cells]
-            if consumed:
-                for cell in consumed:
-                    golden_cells.discard(cell)
+            for cell in consumed:
+                golden_cells.discard(cell)
+            golden_trigger = bool(consumed)
+
+            # --- 2. Big clear ---------------------------------------------
+            big_trigger = len(cells) >= BIG_CLEAR_CELLS
+
+            # --- 3. Combo (consecutive within 0.3s) -----------------------
+            in_window = (
+                prev_clear_ts > 0.0
+                and (now - prev_clear_ts) <= COMBO_WINDOW_S
+            )
+            if in_window:
+                player.combo_count += 1
+            else:
+                player.combo_count = 1  # start a fresh chain
+            combo_trigger = player.combo_count >= COMBO_THRESHOLD
+            if combo_trigger:
+                # Streak consumed by the drop, regardless of inventory fit.
+                player.combo_count = 0
+            combo_after = player.combo_count
+
+            if golden_trigger or big_trigger or combo_trigger:
                 free_slot = next(
                     (i for i, s in enumerate(player.inventory) if s is None),
                     None,
@@ -375,6 +401,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             cells=cells,
             scores=scores,
             t_ms=t_ms,
+            combo=combo_after,
         ),
     )
     if item_msg is not None:

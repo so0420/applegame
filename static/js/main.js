@@ -60,6 +60,7 @@ const state = {
   effects: { double: 0, blind: 0, hint: 0 },  // expiry ms
   effectTimers: {},
   initialGolden: [],   // [[r,c], ...] picked at game start
+  combo: 0,
 };
 
 const ITEM_META = {
@@ -616,8 +617,11 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:clear", (e) => {
-    const { cells, scores, player_id, t_ms } = e.detail;
+    const { cells, scores, player_id, t_ms, combo } = e.detail;
     state.events.push({ kind: "clear", t_ms: t_ms ?? 0, player_id, cells });
+    if (player_id === state.playerId && state.variant === "items") {
+      setCombo(combo ?? 0);
+    }
     if (player_id === state.playerId) {
       // Server confirmation of my own submit. Pop the matching pending
       // entry; only re-apply if it wasn't done optimistically already.
@@ -693,6 +697,7 @@ function onReconnected(m) {
     state.inventory = Array.isArray(me.inventory)
       ? [me.inventory[0] ?? null, me.inventory[1] ?? null, me.inventory[2] ?? null]
       : [null, null, null];
+    setCombo(typeof me.combo === "number" ? me.combo : 0);
   }
   renderInventory();
   state.initialGolden = Array.isArray(m.initial_golden)
@@ -907,6 +912,25 @@ function clearAllEffectVisuals() {
   hideBoardEffect("double");
   hideBoardEffect("blind");
   hideBoardEffect("shuffle");
+  setCombo(0);
+}
+
+function setCombo(n) {
+  state.combo = n;
+  const badge = $("comboBadge");
+  const mob = $("mobileCombo");
+  if (n > 0) {
+    $("comboCount").textContent = String(n);
+    $("mobileComboCount").textContent = String(n);
+    badge.hidden = false;
+    mob.hidden = false;
+    badge.classList.remove("pulse");
+    void badge.offsetWidth;
+    badge.classList.add("pulse");
+  } else {
+    badge.hidden = true;
+    mob.hidden = true;
+  }
 }
 
 function applyInitialGoldenToAll() {
@@ -952,6 +976,7 @@ function onGameStart(m) {
   state.bigRenderer.setBlind(false);
   state.bigRenderer.setHint(null);
   state.bigRenderer.clearGolden();
+  setCombo(0);
 
   buildLeaderboard();
   // Stamp the shared golden positions onto every renderer once minis exist

@@ -24,6 +24,12 @@ ITEM_KINDS = ("hint", "double", "blind", "shuffle")
 # start (same positions for every player). Clearing one grants a
 # random item into a free inventory slot; no respawn over time.
 INITIAL_GOLDEN_COUNT = 3
+# Three independent item-drop triggers (golden, big-clear, combo).
+# If a single submit satisfies more than one trigger the player still
+# only receives a single item — the simultaneous-trigger cap.
+COMBO_THRESHOLD = 3
+COMBO_WINDOW_S = 0.3
+BIG_CLEAR_CELLS = 4
 
 
 @dataclass
@@ -41,6 +47,7 @@ class Player:
     )
     double_until: float = 0.0       # score-multiplier deadline (epoch s)
     blind_until: float = 0.0        # number-hide deadline imposed on me
+    combo_count: int = 0            # consecutive-clear streak (within window)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -49,6 +56,7 @@ class Player:
             "score": self.score,
             "connected": self.connected,
             "inventory": list(self.inventory),
+            "combo": self.combo_count,
         }
 
 
@@ -117,6 +125,7 @@ class Room:
             p.inventory = [None] * INVENTORY_SIZE
             p.double_until = 0.0
             p.blind_until = 0.0
+            p.combo_count = 0
 
     def start(self) -> None:
         self._init_boards()
@@ -129,6 +138,7 @@ class Room:
             p.inventory = [None] * INVENTORY_SIZE
             p.double_until = 0.0
             p.blind_until = 0.0
+            p.combo_count = 0
 
     def _init_boards(self) -> None:
         """Generate one master board, deep-copy per player."""

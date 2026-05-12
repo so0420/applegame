@@ -898,6 +898,41 @@ button.ghost:hover {
   gap: 6px;
   pointer-events: auto;
 }
+.mobile-combo {
+  position: absolute;
+  top: 54px;
+  left: 10px;
+  background: rgba(247, 193, 80, 0.95);
+  color: #5a3a00;
+  font-weight: 800;
+  font-size: 14px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+/* ---- Combo badge (game-bar) ---- */
+.combo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: linear-gradient(135deg, #ffb74d, #f57c00);
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(245, 124, 0, 0.35);
+}
+.combo-badge .combo-icon { font-size: 14px; }
+.combo-badge strong { font-variant-numeric: tabular-nums; font-size: 14px; }
+.combo-badge.pulse { animation: combo-pulse 0.3s ease-out; }
+@keyframes combo-pulse {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
 /* ---- Help page lists ---- */
 .help-list {
   margin: 8px 0 0 0;
