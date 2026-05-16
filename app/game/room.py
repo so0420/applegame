@@ -13,6 +13,10 @@ from fastapi import WebSocket
 from .board import generate_board, ROWS, COLS, TOTAL
 
 GAME_DURATION = 120.0  # seconds
+# 3-2-1 countdown before input is accepted at round start. The board is
+# revealed during the countdown so players can scout, but SUBMIT and
+# USE_ITEM are gated server-side until started_at.
+COUNTDOWN_SECS = 3.0
 
 # Item-mode constants
 INVENTORY_SIZE = 3
@@ -147,9 +151,13 @@ class Room:
             p.submit_history.clear()
 
     def start(self) -> None:
+        # Read the module-level constant fresh so tests can monkeypatch it.
+        import app.game.room as _room_mod
+        countdown = _room_mod.COUNTDOWN_SECS
         self._init_boards()
         self.state = "playing"
-        self.started_at = time.time()
+        # started_at is the moment inputs become live, i.e. countdown end.
+        self.started_at = time.time() + countdown
         self.ends_at = self.started_at + GAME_DURATION
         for p in self.players.values():
             p.score = 0

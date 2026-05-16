@@ -83,15 +83,26 @@ attachDragInput(canvas, state.bigRenderer, {
   onUpdate: (rect) => {
     if (state.replayActive) return;
     if (state.focusedPlayerId !== state.playerId) return; // viewing only
+    if (state.startedAt && Date.now() < state.startedAt) {
+      sumBadge.hidden = true;
+      return;  // pre-game countdown — drags don't fire
+    }
     state.ws?.send("drag_update", rect);
-    const sum = state.bigRenderer.sumIn(rect);
-    sumBadge.hidden = false;
-    sumBadge.textContent = String(sum);
-    sumBadge.classList.toggle("ten", sum === 10);
-    const center = state.bigRenderer.rectCenter(rect);
-    if (center) {
-      sumBadge.style.left = center.x + "px";
-      sumBadge.style.top = center.y + "px";
+    // Blind effect must also hide the running sum — otherwise the player
+    // can read the hidden values straight off the drag badge.
+    const blinded = state.effects.blind > Date.now();
+    if (blinded) {
+      sumBadge.hidden = true;
+    } else {
+      const sum = state.bigRenderer.sumIn(rect);
+      sumBadge.hidden = false;
+      sumBadge.textContent = String(sum);
+      sumBadge.classList.toggle("ten", sum === 10);
+      const center = state.bigRenderer.rectCenter(rect);
+      if (center) {
+        sumBadge.style.left = center.x + "px";
+        sumBadge.style.top = center.y + "px";
+      }
     }
     // Mirror onto my own mini so the leaderboard shows my live drag
     state.miniRenderers.get(state.playerId)?.setMyDrag(rect);
@@ -100,6 +111,7 @@ attachDragInput(canvas, state.bigRenderer, {
     sumBadge.hidden = true;
     if (state.replayActive) return;
     if (state.focusedPlayerId !== state.playerId) return;
+    if (state.startedAt && Date.now() < state.startedAt) return;
 
     // Tally the rect locally first. If it doesn't sum to 10, don't even
     // bother the server — it would only respond with REJECT and the
@@ -846,6 +858,7 @@ function onReconnected(m) {
     show("game");
     startTimer();
     startProgress();
+    maybeShowStartCountdown();
     saveSession();
     requestAnimationFrame(() => {
       state.bigRenderer.resize();
@@ -961,6 +974,8 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
       state.effects.blind = until_ms;
       state.bigRenderer.setBlind(true);
       state.miniRenderers.get(state.playerId)?.setBlind(true);
+      // Hide any sum badge from an in-progress drag started before blind hit.
+      sumBadge.hidden = true;
       showBoardEffect("blind", remainingMs);
     } else if (effect === "hint" && Array.isArray(hint)) {
       const cells = hint.map((h) => [h.r, h.c]);
@@ -1140,10 +1155,53 @@ function onGameStart(m) {
   screens.game.classList.remove("drawer-open");
   startTimer();
   startProgress();
+  maybeShowStartCountdown();
   requestAnimationFrame(() => {
     state.bigRenderer.resize();
     for (const r of state.miniRenderers.values()) r.resize();
   });
+}
+
+function maybeShowStartCountdown() {
+  const el = $("startCountdown");
+  if (!el) return;
+  const startsAt = state.startedAt;
+  if (!startsAt || Date.now() >= startsAt) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.classList.remove("go");
+  let last = null;
+  const tick = () => {
+    if (!state.startedAt || state.startedAt !== startsAt) {
+      el.hidden = true;
+      return;
+    }
+    const remaining = startsAt - Date.now();
+    if (remaining <= 0) {
+      el.textContent = "GO!";
+      el.classList.add("go");
+      setTimeout(() => {
+        if (state.startedAt === startsAt) {
+          el.hidden = true;
+          el.classList.remove("go");
+        }
+      }, 500);
+      return;
+    }
+    const sec = Math.ceil(remaining / 1000);
+    if (sec !== last) {
+      last = sec;
+      el.textContent = String(sec);
+      // Restart pulse animation on each tick
+      el.classList.remove("pulse");
+      void el.offsetWidth;
+      el.classList.add("pulse");
+    }
+    requestAnimationFrame(tick);
+  };
+  tick();
 }
 
 function onRoomUpdate(room) {
@@ -1396,7 +1454,9 @@ function startTimer() {
   if (state.timerInterval) clearInterval(state.timerInterval);
   let prevLocked = null;
   const tick = () => {
-    const remaining = Math.max(0, state.endsAt - Date.now());
+    // Clamp to GAME_DURATION so countdown phase displays "2:00" instead of "2:03".
+    const raw = Math.max(0, state.endsAt - Date.now());
+    const remaining = Math.min(raw, GAME_DURATION_MS);
     const sec = Math.ceil(remaining / 1000);
     const m = Math.floor(sec / 60);
     const s = sec % 60;
@@ -1431,7 +1491,8 @@ function startProgress() {
   fill.classList.remove("warn", "danger");
   vfill.classList.remove("warn", "danger");
   const tick = () => {
-    const elapsed = Date.now() - startTs;
+    // Clamp at zero during the pre-game countdown so the bar doesn't go negative.
+    const elapsed = Math.max(0, Date.now() - startTs);
     const pct = Math.min(100, (elapsed / GAME_DURATION_MS) * 100);
     fill.style.width = pct + "%";
     vfill.style.width = pct + "%";

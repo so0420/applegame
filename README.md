@@ -38,7 +38,7 @@ python applegame.py
 python -m uvicorn app.main:app --reload --ws-ping-interval=30 --ws-ping-timeout=120
 ```
 
-브라우저에서 `http://127.0.0.1:8000` 접속.
+브라우저에서 `http://127.0.0.1:9000` 접속.
 
 ### 테스트
 

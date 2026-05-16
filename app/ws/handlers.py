@@ -323,7 +323,8 @@ async def _start_game(room: Room) -> None:
 
     async def end_after_timeout() -> None:
         try:
-            await asyncio.sleep(GAME_DURATION)
+            # Sleep until ends_at so the pre-game countdown is included.
+            await asyncio.sleep(max(0.0, (room.ends_at or 0) - time.time()))
             await _end_game(room)
         except asyncio.CancelledError:
             pass
@@ -345,6 +346,10 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         if my_board is None:
             return
         now = time.time()
+        # Pre-game countdown: board is visible but submits are inert.
+        if room.started_at is not None and now < room.started_at:
+            await send(player, S.msg(S.REJECT, reason="not_started"))
+            return
         # Anti-macro gate — runs BEFORE validate_and_clear so a bot can't
         # discover whether its rect was geometrically valid by probing.
         reason = _anti_macro_reject_reason(player, now)
@@ -472,6 +477,8 @@ async def _handle_use_item(
     async with room.lock:
         if room.state != "playing":
             return
+        if room.started_at is not None and now < room.started_at:
+            return  # silently ignore during countdown
         item = player.inventory[slot]
         if item is None:
             return

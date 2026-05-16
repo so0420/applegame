@@ -1071,6 +1071,35 @@ button.ghost:hover {
   color: white;
 }
 
+/* ---- Pre-game countdown overlay ---- */
+.start-countdown {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+  font-size: clamp(80px, 18vmin, 240px);
+  font-weight: 900;
+  color: #fff;
+  text-shadow: 0 6px 24px rgba(0, 0, 0, 0.55), 0 0 30px rgba(247, 193, 80, 0.55);
+  background: rgba(0, 0, 0, 0.18);
+}
+.start-countdown.pulse {
+  animation: countdown-pulse 0.95s ease-out;
+}
+.start-countdown.go {
+  color: #ffd95a;
+  font-size: clamp(60px, 12vmin, 160px);
+  letter-spacing: 4px;
+}
+@keyframes countdown-pulse {
+  0%   { transform: scale(0.55); opacity: 0.2; }
+  40%  { transform: scale(1.1);  opacity: 1; }
+  100% { transform: scale(1);    opacity: 0.9; }
+}
+
 /* ---- Board effect overlays ---- */
 .board-area { position: relative; }
 .board-effect-overlay {
