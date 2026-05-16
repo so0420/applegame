@@ -391,14 +391,29 @@ async function startSession(intent, code = null, variant = null) {
 $("cancelBtn").addEventListener("click", () => leaveAndGoHome());
 $("homeBtn").addEventListener("click", () => leaveAndGoHome());
 $("startBtn").addEventListener("click", () => state.ws?.send("start"));
-$("rematchBtn").addEventListener("click", () => {
+function triggerRematch() {
   exitReplay();
+  if (state.mode === "random") {
+    // Random rooms have no host and don't reuse the room — push the
+    // player straight back into matchmaking with the same variant, as if
+    // they had hit "랜덤 매칭" from the home screen again.
+    const variant = state.variant === "items" ? "items" : "classic";
+    audio.stopBgm();
+    if (state._bgmStartTimer) {
+      clearTimeout(state._bgmStartTimer);
+      state._bgmStartTimer = null;
+    }
+    state.ws?.send("leave");
+    state.ws?.close();
+    clearSession();
+    resetState();
+    startSession("match", null, variant);
+    return;
+  }
   state.ws?.send("rematch");
-});
-$("mobileRematchBtn").addEventListener("click", () => {
-  exitReplay();
-  state.ws?.send("rematch");
-});
+}
+$("rematchBtn").addEventListener("click", triggerRematch);
+$("mobileRematchBtn").addEventListener("click", triggerRematch);
 
 // Drawer toggle (mobile) — desktop drawer button + mobile-overlay corner button
 $("drawerToggle").addEventListener("click", () => {
@@ -410,15 +425,15 @@ $("drawerBackdrop").addEventListener("click", () => {
 $("cornerDrawerBtn").addEventListener("click", () => {
   screens.game.classList.toggle("drawer-open");
 });
-$("cornerHomeBtn").addEventListener("click", () => {
-  // Mobile UX safety net: this button sits right next to the first
-  // inventory slot, so accidental taps mid-game are common. Confirm
-  // before tearing down a live match. Skip the prompt once the round
-  // is already over (result banner / replay).
+function confirmAndGoHome() {
+  // Confirm before tearing down a live match. Skip the prompt once the
+  // round is already over (result banner / replay).
   const inPlay = state.endsAt && Date.now() < state.endsAt && !state.replayActive;
   if (inPlay && !confirm("정말 나가시겠어요? 진행 중인 게임이 중단됩니다.")) return;
   leaveAndGoHome();
-});
+}
+$("cornerHomeBtn").addEventListener("click", confirmAndGoHome);
+$("gameHomeBtn")?.addEventListener("click", confirmAndGoHome);
 
 // In-place nickname editing inside the lobby player list. Replaces the
 // dedicated "내 닉네임" section that used to sit above the list.
@@ -1655,13 +1670,14 @@ function showResult(detail) {
   const players = state.room?.players ?? [];
   const enough = players.length >= 2;
   const canRematch =
-    state.mode === "solo"
-      ? true
-      : state.mode === "friend"
-        ? (state.playerId === state.hostId && enough)
-        : enough;
+    state.mode === "solo" ? true
+    : state.mode === "random" ? true   // every random player can re-queue alone
+    : state.playerId === state.hostId && enough;  // friend: host gated
   const rematchBtn = $("rematchBtn");
-  const rematchLabel = state.mode === "friend" ? "대기실로" : "새 게임";
+  const rematchLabel =
+    state.mode === "friend" ? "대기실로"
+    : state.mode === "random" ? "다시하기"
+    : "새 게임";
   rematchBtn.textContent = rematchLabel;
   rematchBtn.hidden = !canRematch;
   // Mirror to the mobile-overlay rematch button — desktop result-banner

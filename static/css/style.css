@@ -541,6 +541,22 @@ button.ghost:hover {
   border-radius: 8px;
   font-weight: 700;
 }
+/* Desktop game-bar home button (mobile already has cornerHomeBtn). */
+.game-home-btn {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  padding: 6px 12px;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.game-home-btn:hover {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
 .game-stat {
   display: flex;
   align-items: baseline;

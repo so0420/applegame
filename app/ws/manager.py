@@ -42,11 +42,14 @@ class RoomManager:
             else:
                 raise RuntimeError("could not allocate room id")
             cap = capacity if capacity is not None else (1 if mode == "solo" else 2)
+            # Random rooms have no host — every player can re-queue or leave
+            # independently. Friend/solo rooms still pin a host.
+            host_id = None if mode == "random" else host.id
             room = Room(
                 id=rid,
                 mode=mode,
                 capacity=cap,
-                host_id=host.id,
+                host_id=host_id,
                 players={host.id: host},
             )
             self.rooms[rid] = room

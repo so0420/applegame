@@ -658,7 +658,12 @@ async def _handle_rematch(room: Room, player: Player) -> None:
     async with room.lock:
         if room.state != "finished":
             return
-        # Only host (friend mode) or any player (solo/random) can trigger rematch
+        # Random rooms intentionally don't rematch in place — the client
+        # re-enters matchmaking from scratch so each player can be paired
+        # with a fresh opponent set.
+        if room.mode == "random":
+            return
+        # Only host (friend mode) can trigger rematch
         if room.mode == "friend" and player.id != room.host_id:
             return
         if room.mode == "friend":
