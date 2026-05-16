@@ -267,6 +267,9 @@ body {
   text-align: center;
   margin: 16px 0 0 0;
 }
+/* Random-match variant picker: a bit more breathing room between the
+   helper sentence and the variant buttons. */
+#matchVariantScreen .helper + .modes { margin-top: 20px; }
 
 /* Inputs */
 .field {
