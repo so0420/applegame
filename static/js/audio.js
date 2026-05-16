@@ -103,16 +103,6 @@ class GameAudio {
       this.bgmGain = this.ctx.createGain();
       this.bgmGain.connect(this.masterGain);
     }
-    // Pre-bake one short noise buffer for hi-hat-like ticks. Reusing the
-    // same buffer keeps the per-tick allocation cost off the audio thread.
-    if (!this._noiseBuf) {
-      const sr = this.ctx.sampleRate;
-      const len = Math.floor(sr * 0.06);
-      const buf = this.ctx.createBuffer(1, len, sr);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-      this._noiseBuf = buf;
-    }
     const t = this.ctx.currentTime;
     this.bgmGain.gain.cancelScheduledValues(t);
     this.bgmGain.gain.setValueAtTime(0, t);
@@ -161,10 +151,10 @@ class GameAudio {
         this._bgmNote(f, nt, eighth * 0.85);
         nt += eighth;
       }
-      // Hi-hat-like ticks on off-beats (eighths 1,3,5,7) for groove.
-      for (let i = 1; i < 8; i += 2) {
-        this._bgmTick(t + i * eighth);
-      }
+      // Soft wood-block "tock" on beats 2 and 4 (backbeat) — gives a
+      // gentle groove without the harsh fly-zap of a noise hi-hat.
+      this._bgmTock(t + 2 * eighth);
+      this._bgmTock(t + 6 * eighth);
       t += 8 * eighth;
     }
     this._bgmNextStart = t;
@@ -177,23 +167,22 @@ class GameAudio {
     );
   }
 
-  _bgmTick(when) {
+  _bgmTock(when) {
+    // Pure sine with a brief downward pitch slide — gives a soft
+    // wood-block "tock". No noise, no high-frequency zap.
     const ctx = this.ctx;
-    if (!this._noiseBuf) return;
-    const src = ctx.createBufferSource();
-    src.buffer = this._noiseBuf;
-    const hp = ctx.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 5500;
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(2100, when);
+    osc.frequency.exponentialRampToValueAtTime(1400, when + 0.025);
     const env = ctx.createGain();
     env.gain.setValueAtTime(0.0001, when);
-    env.gain.exponentialRampToValueAtTime(0.06, when + 0.004);
-    env.gain.exponentialRampToValueAtTime(0.0001, when + 0.035);
-    src.connect(hp);
-    hp.connect(env);
+    env.gain.exponentialRampToValueAtTime(0.05, when + 0.004);
+    env.gain.exponentialRampToValueAtTime(0.0001, when + 0.06);
+    osc.connect(env);
     env.connect(this.bgmGain);
-    src.start(when);
-    src.stop(when + 0.08);
+    osc.start(when);
+    osc.stop(when + 0.08);
   }
 
   _bgmNote(freq, when, dur) {
