@@ -33,6 +33,9 @@
       <span class="replay-badge-icon" aria-hidden="true">🔁</span>
       <span class="replay-badge-text">리플레이</span>
     </div>
+    <div id="mobileResultActions" class="mobile-result-actions" hidden>
+      <button id="mobileRematchBtn" type="button">새 게임</button>
+    </div>
   </div>
   <!-- Vertical timer bar pinned to the right edge of the viewport -->
   <div id="verticalProgress" class="vertical-progress">
@@ -253,9 +256,11 @@
         </aside>
         <main class="board-area">
           <div id="focusLabel" class="focus-label" hidden></div>
-          <canvas id="board"></canvas>
-          <div id="startCountdown" class="start-countdown" hidden>
-            <span id="startCountdownNum" class="start-countdown-num"></span>
+          <div class="board-wrap">
+            <canvas id="board"></canvas>
+            <div id="startCountdown" class="start-countdown" hidden>
+              <span id="startCountdownNum" class="start-countdown-num"></span>
+            </div>
           </div>
         </main>
       </div>

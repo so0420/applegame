@@ -376,6 +376,10 @@ $("rematchBtn").addEventListener("click", () => {
   exitReplay();
   state.ws?.send("rematch");
 });
+$("mobileRematchBtn").addEventListener("click", () => {
+  exitReplay();
+  state.ws?.send("rematch");
+});
 
 // Drawer toggle (mobile) — desktop drawer button + mobile-overlay corner button
 $("drawerToggle").addEventListener("click", () => {
@@ -482,6 +486,7 @@ function leaveAndGoHome() {
     state._bgmStartTimer = null;
   }
   $("resultBanner").hidden = true;
+  $("mobileResultActions").hidden = true;
   state.ws?.send("leave");
   state.ws?.close();
   clearSession();
@@ -532,6 +537,7 @@ function resetState() {
   $("miniScore").textContent = "0";
   $("miniTimer").textContent = "2:00";
   $("resultBanner").hidden = true;
+  $("mobileResultActions").hidden = true;
   $("topProgress").hidden = false;
   $("focusLabel").hidden = true;
   screens.game.classList.remove("drawer-open");
@@ -695,6 +701,7 @@ function bindSocket(ws) {
     // Friend room came back to the lobby for the next round
     exitReplay();
     $("resultBanner").hidden = true;
+  $("mobileResultActions").hidden = true;
     $("topProgress").hidden = false;
     state.events = [];
     state.scores = {};
@@ -976,7 +983,11 @@ function showBoardEffect(kind, durationMs) {
     el.className = `board-effect-overlay ${kind}`;
     const labels = { bonus: "+1 SCORE", blind: "🙈 숫자 숨김", shuffle: "🔀 SHUFFLE" };
     el.textContent = labels[kind] || "";
-    document.querySelector(".board-area").appendChild(el);
+    // Attach to .board-wrap so the overlay hugs the canvas exactly,
+    // matching the replay border. board-area would extend past the
+    // canvas on mobile and look too far from the apples.
+    (document.querySelector(".board-wrap")
+      || document.querySelector(".board-area")).appendChild(el);
   }
   el.hidden = false;
   void el.offsetWidth;
@@ -1175,6 +1186,7 @@ function onGameStart(m) {
   state.gameWinnerId = null;
   // Hide result banner if it was visible from a prior round
   $("resultBanner").hidden = true;
+  $("mobileResultActions").hidden = true;
   // Replay controls only shown after game ends, not during live play
   $("replayControls").hidden = true;
   $("topProgress").hidden = false;
@@ -1630,8 +1642,14 @@ function showResult(detail) {
         ? (state.playerId === state.hostId && enough)
         : enough;
   const rematchBtn = $("rematchBtn");
-  rematchBtn.textContent = state.mode === "friend" ? "대기실로" : "새 게임";
+  const rematchLabel = state.mode === "friend" ? "대기실로" : "새 게임";
+  rematchBtn.textContent = rematchLabel;
   rematchBtn.hidden = !canRematch;
+  // Mirror to the mobile-overlay rematch button — desktop result-banner
+  // is display:none on the rotated phone view so without this mobile
+  // players had no rematch entry point.
+  $("mobileRematchBtn").textContent = rematchLabel;
+  $("mobileResultActions").hidden = !canRematch;
   $("resultBanner").hidden = false;
 
   // Stay on game screen and auto-start replay if there's anything to play

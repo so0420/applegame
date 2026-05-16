@@ -1147,16 +1147,47 @@ button.ghost:hover {
   padding: 3px 9px;
   z-index: 52;
 }
-/* Yellow dashed border around the board — kept on both desktop and mobile
-   to give a board-level visual cue of replay mode. */
-body.on-replay .board-area::before {
+/* End-of-round rematch button for mobile — the desktop result banner is
+   display:none in the rotated view, so without this mobile players had
+   no way to start a new round or return to the lobby. */
+.mobile-result-actions {
+  position: absolute;
+  top: 38px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 52;
+  pointer-events: auto;
+}
+.mobile-result-actions[hidden] { display: none; }
+#mobileRematchBtn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+/* Yellow dashed border — hugs the canvas itself (via .board-wrap which
+   is inline-block sized to canvas) so it stays close to the apples on
+   mobile instead of riding the far edge of board-area's padding. */
+body.on-replay .board-wrap::before {
   content: "";
   position: absolute;
-  inset: 4px;
+  inset: -6px;
   border: 2px dashed rgba(247, 193, 80, 0.55);
   border-radius: 12px;
   pointer-events: none;
   z-index: 7;
+}
+.board-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;  /* eliminate inline-block whitespace gap */
 }
 
 /* ---- Pre-game countdown overlay ---- */

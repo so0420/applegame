@@ -175,7 +175,13 @@ export class BoardRenderer {
   }
 
   resize() {
-    const wrap = this.canvas.parentElement;
+    // The main board now sits inside a .board-wrap whose size is dictated
+    // by the canvas itself (inline-block). To break the chicken-and-egg
+    // loop we read sizing from the surrounding .board-area, which has
+    // independent flex sizing. Mini canvases keep the parent lookup.
+    const wrap = this.mini
+      ? this.canvas.parentElement
+      : (this.canvas.closest(".board-area") || this.canvas.parentElement);
     if (!wrap) return;
     const cs = window.getComputedStyle(wrap);
     const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
