@@ -1080,16 +1080,27 @@ button.ghost:hover {
   justify-content: center;
   pointer-events: none;
   z-index: 10;
+  background: rgba(0, 0, 0, 0.18);
+  /* Clip the inner pulse animation so the dim layer never grows past the board. */
+  overflow: hidden;
+}
+/* Author display rule above outranks the UA [hidden] rule on its own —
+   restate it explicitly so el.hidden = true actually hides the overlay. */
+.start-countdown[hidden] { display: none; }
+.start-countdown-num {
+  display: inline-block;
   font-size: clamp(80px, 18vmin, 240px);
   font-weight: 900;
+  line-height: 1;
   color: #fff;
   text-shadow: 0 6px 24px rgba(0, 0, 0, 0.55), 0 0 30px rgba(247, 193, 80, 0.55);
-  background: rgba(0, 0, 0, 0.18);
+  transform-origin: center;
+  will-change: transform, opacity;
 }
-.start-countdown.pulse {
+.start-countdown-num.pulse {
   animation: countdown-pulse 0.95s ease-out;
 }
-.start-countdown.go {
+.start-countdown.go .start-countdown-num {
   color: #ffd95a;
   font-size: clamp(60px, 12vmin, 160px);
   letter-spacing: 4px;

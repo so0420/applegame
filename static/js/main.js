@@ -1164,7 +1164,8 @@ function onGameStart(m) {
 
 function maybeShowStartCountdown() {
   const el = $("startCountdown");
-  if (!el) return;
+  const numEl = $("startCountdownNum");
+  if (!el || !numEl) return;
   const startsAt = state.startedAt;
   if (!startsAt || Date.now() >= startsAt) {
     el.hidden = true;
@@ -1172,7 +1173,9 @@ function maybeShowStartCountdown() {
   }
   el.hidden = false;
   el.classList.remove("go");
+  numEl.classList.remove("pulse");
   let last = null;
+  let goScheduled = false;
   const tick = () => {
     if (!state.startedAt || state.startedAt !== startsAt) {
       el.hidden = true;
@@ -1180,24 +1183,28 @@ function maybeShowStartCountdown() {
     }
     const remaining = startsAt - Date.now();
     if (remaining <= 0) {
-      el.textContent = "GO!";
+      if (goScheduled) return;
+      goScheduled = true;
+      numEl.textContent = "GO!";
+      numEl.classList.remove("pulse");
+      void numEl.offsetWidth;
+      numEl.classList.add("pulse");
       el.classList.add("go");
       setTimeout(() => {
-        if (state.startedAt === startsAt) {
-          el.hidden = true;
-          el.classList.remove("go");
-        }
+        el.hidden = true;
+        el.classList.remove("go");
+        numEl.classList.remove("pulse");
       }, 500);
       return;
     }
     const sec = Math.ceil(remaining / 1000);
     if (sec !== last) {
       last = sec;
-      el.textContent = String(sec);
+      numEl.textContent = String(sec);
       // Restart pulse animation on each tick
-      el.classList.remove("pulse");
-      void el.offsetWidth;
-      el.classList.add("pulse");
+      numEl.classList.remove("pulse");
+      void numEl.offsetWidth;
+      numEl.classList.add("pulse");
     }
     requestAnimationFrame(tick);
   };
