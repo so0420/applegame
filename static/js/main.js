@@ -1162,6 +1162,14 @@ function onGameStart(m) {
   });
 }
 
+function setNumbersBlinded(on) {
+  // Hide apple numbers on every visible renderer. Reuses the blind flag,
+  // which is safe during countdown because USE_ITEM is gated server-side
+  // so no item-driven blind effect can race with this.
+  state.bigRenderer?.setBlind(on);
+  for (const r of state.miniRenderers.values()) r.setBlind(on);
+}
+
 function maybeShowStartCountdown() {
   const el = $("startCountdown");
   const numEl = $("startCountdownNum");
@@ -1169,16 +1177,19 @@ function maybeShowStartCountdown() {
   const startsAt = state.startedAt;
   if (!startsAt || Date.now() >= startsAt) {
     el.hidden = true;
+    setNumbersBlinded(false);
     return;
   }
   el.hidden = false;
   el.classList.remove("go");
   numEl.classList.remove("pulse");
+  setNumbersBlinded(true);
   let last = null;
   let goScheduled = false;
   const tick = () => {
     if (!state.startedAt || state.startedAt !== startsAt) {
       el.hidden = true;
+      setNumbersBlinded(false);
       return;
     }
     const remaining = startsAt - Date.now();
@@ -1194,6 +1205,8 @@ function maybeShowStartCountdown() {
         el.hidden = true;
         el.classList.remove("go");
         numEl.classList.remove("pulse");
+        // Reveal numbers exactly when GO disappears.
+        setNumbersBlinded(false);
       }, 500);
       return;
     }
