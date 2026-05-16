@@ -967,19 +967,21 @@ button.ghost:hover {
   border-top-color: rgba(26, 29, 36, 0.95);
 }
 .inv-slot.mobile {
-  width: 36px;
-  height: 36px;
-  font-size: 18px;
+  width: 48px;
+  height: 48px;
+  font-size: 22px;
 }
 
-/* Mobile-rotated inventory: place near top-right corner */
+/* Mobile-rotated inventory: place near top-right corner.
+   top offset leaves a comfortable 18px gap below the home corner button
+   (10px top + 38px height) so accidental taps don't bleed onto it. */
 .mobile-inventory {
   position: absolute;
-  top: 54px;
+  top: 66px;
   right: 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   pointer-events: auto;
 }
 .mobile-combo {
@@ -1093,6 +1095,17 @@ button.ghost:hover {
 }
 .audio-toggle:hover { background: var(--panel-2); }
 .audio-toggle.muted { opacity: 0.55; }
+/* Mobile-rotated game view: the corner home button already lives at the
+   top-right of viewport, so park the audio toggle in a free corner.
+   Bottom-left (viewport) sits clear of every other floating UI element. */
+@media (orientation: portrait) and (max-width: 900px) {
+  body.on-game .audio-toggle {
+    top: auto;
+    right: auto;
+    bottom: 14px;
+    left: 10px;
+  }
+}
 
 /* ---- Replay indicator ---- */
 .replay-badge {

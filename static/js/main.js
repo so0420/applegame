@@ -387,7 +387,15 @@ $("drawerBackdrop").addEventListener("click", () => {
 $("cornerDrawerBtn").addEventListener("click", () => {
   screens.game.classList.toggle("drawer-open");
 });
-$("cornerHomeBtn").addEventListener("click", () => leaveAndGoHome());
+$("cornerHomeBtn").addEventListener("click", () => {
+  // Mobile UX safety net: this button sits right next to the first
+  // inventory slot, so accidental taps mid-game are common. Confirm
+  // before tearing down a live match. Skip the prompt once the round
+  // is already over (result banner / replay).
+  const inPlay = state.endsAt && Date.now() < state.endsAt && !state.replayActive;
+  if (inPlay && !confirm("정말 나가시겠어요? 진행 중인 게임이 중단됩니다.")) return;
+  leaveAndGoHome();
+});
 
 // In-place nickname editing inside the lobby player list. Replaces the
 // dedicated "내 닉네임" section that used to sit above the list.
