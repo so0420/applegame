@@ -121,6 +121,22 @@
       </div>
     </section>
 
+    <!-- Random-match variant picker -->
+    <section class="screen" id="matchVariantScreen" hidden>
+      <h2>랜덤 매칭</h2>
+      <div class="section">
+        <h3>게임 방식 선택</h3>
+        <p class="helper">같은 방식을 고른 상대들과 매칭됩니다.</p>
+        <div class="modes">
+          <button class="mode" data-match-variant="classic">클래식</button>
+          <button class="mode secondary" data-match-variant="items">아이템전</button>
+        </div>
+        <div class="lobby-actions">
+          <button id="matchVariantBackBtn" class="ghost">뒤로</button>
+        </div>
+      </div>
+    </section>
+
     <!-- Join with code -->
     <section class="screen" id="joinScreen" hidden>
       <h2>코드로 입장</h2>
@@ -163,8 +179,8 @@
       <div class="section" id="variantSection" hidden>
         <h3>게임 방식</h3>
         <div class="variant-toggle">
-          <button class="variant-btn active" data-variant="classic" type="button">클래식</button>
-          <button class="variant-btn" data-variant="items" type="button">아이템전</button>
+          <button class="variant-btn" data-variant="classic" type="button">클래식</button>
+          <button class="variant-btn active" data-variant="items" type="button">아이템전</button>
         </div>
         <p class="helper" id="variantHelper">아이템전: 황금 사과를 포함해 합10을 만들면 랜덤 아이템 획득</p>
       </div>

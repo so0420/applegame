@@ -168,6 +168,8 @@ async def session(
             room = await manager.create_room("solo", player)
         elif intent == "create":
             room = await manager.create_room("friend", player, capacity=CAPACITY_DEFAULT)
+            # Friend rooms default to items mode — the variant most hosts pick.
+            room.variant = "items"
         elif intent == "join":
             room = manager.get(code)
             if room is None:
@@ -181,7 +183,9 @@ async def session(
             async with room.lock:
                 room.players[player.id] = player
         elif intent == "match":
-            room, _deadline_ms = await matchmaker.enqueue(player)
+            raw_variant = hello.get("variant", "classic")
+            match_variant = raw_variant if raw_variant in ("classic", "items") else "classic"
+            room, _deadline_ms = await matchmaker.enqueue(player, variant=match_variant)
         else:
             await ws.send_json(S.msg(S.ERROR, code="bad_intent", message=f"unknown intent {intent!r}"))
             await ws.close()

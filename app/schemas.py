@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 # Client message types
-HELLO = "hello"          # {nickname?, intent: solo|create|join|match, code?}
+HELLO = "hello"          # {nickname?, intent: solo|create|join|match, code?, variant?}
 RENAME = "rename"        # {nickname}
 SET_CAPACITY = "set_capacity"  # {capacity} (host only, waiting state)
 SET_VARIANT = "set_variant"    # {variant} classic|items (host only, waiting state)

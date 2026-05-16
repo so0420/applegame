@@ -106,11 +106,12 @@ def test_set_variant_host_only_friend_only():
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"type": "hello", "intent": "create"})
         joined = ws.receive_json()
-        assert joined["room"]["variant"] == "classic"
-        ws.send_json({"type": "set_variant", "variant": "items"})
+        # Friend rooms now default to items mode.
+        assert joined["room"]["variant"] == "items"
+        ws.send_json({"type": "set_variant", "variant": "classic"})
         msg = ws.receive_json()
         assert msg["type"] == "variant_changed"
-        assert msg["variant"] == "items"
+        assert msg["variant"] == "classic"
 
 
 def test_set_variant_rejected_in_solo():
@@ -261,6 +262,10 @@ def test_classic_room_does_not_send_golden_in_game_start():
         host.send_json({"type": "hello", "intent": "create"})
         host_joined = host.receive_json()
         room_id = host_joined["room"]["id"]
+        # Friend rooms now default to items mode — flip back to classic so
+        # this test exercises the classic-specific code paths.
+        host.send_json({"type": "set_variant", "variant": "classic"})
+        host.receive_json()  # variant_changed
         with client.websocket_connect("/ws") as guest:
             guest.send_json({"type": "hello", "intent": "join", "code": room_id})
             guest.receive_json()

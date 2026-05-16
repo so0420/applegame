@@ -10,6 +10,7 @@ const screens = {
   home: $("home"),
   helpScreen: $("helpScreen"),
   joinScreen: $("joinScreen"),
+  matchVariantScreen: $("matchVariantScreen"),
   lobby: $("lobby"),
   game: $("game"),
 };
@@ -211,6 +212,9 @@ function clearSession() {
 // ---- Home screen ----
 document.querySelectorAll(".mode").forEach((btn) => {
   btn.addEventListener("click", async () => {
+    // Variant-pick buttons inside #matchVariantScreen are also `.mode`
+    // chips — skip them here, they have their own handler below.
+    if (btn.dataset.matchVariant) return;
     const intent = btn.dataset.intent;
     if (intent === "join-open") {
       $("joinCode").value = "";
@@ -218,9 +222,22 @@ document.querySelectorAll(".mode").forEach((btn) => {
       $("joinCode").focus();
       return;
     }
+    if (intent === "match") {
+      show("matchVariantScreen");
+      return;
+    }
     await startSession(intent);
   });
 });
+
+// Random-match variant pickers
+document.querySelectorAll("[data-match-variant]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const variant = btn.dataset.matchVariant === "items" ? "items" : "classic";
+    await startSession("match", null, variant);
+  });
+});
+$("matchVariantBackBtn")?.addEventListener("click", () => show("home"));
 
 // ---- Help screen ----
 $("helpOpenBtn")?.addEventListener("click", () => show("helpScreen"));
@@ -348,12 +365,14 @@ async function submitJoinCode() {
   await startSession("join", code);
 }
 
-async function startSession(intent, code = null) {
+async function startSession(intent, code = null, variant = null) {
   state.intent = intent;
   state.ws = new GameSocket();
   bindSocket(state.ws);
   await state.ws.connect();
-  state.ws.send("hello", { intent, code });
+  const hello = { intent, code };
+  if (variant) hello.variant = variant;
+  state.ws.send("hello", hello);
 
   $("lobbyTitle").textContent =
     intent === "match" ? "랜덤 매칭 중" :

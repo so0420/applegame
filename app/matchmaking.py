@@ -1,7 +1,8 @@
-"""Random matchmaking — single growing waiting room with countdown.
+"""Random matchmaking — one growing waiting room per variant.
 
-Players joining 'random' all land in the same pending room (capacity 7).
-The countdown starts when 2 players are present (20 s) and short-circuits
+Each variant ("classic", "items") has its own pending room and countdown
+so players only get matched with others who picked the same variant. The
+countdown starts when 2 players share a variant (20 s) and short-circuits
 to 5 s when the room hits 7. When the timer fires the round is started.
 """
 from __future__ import annotations
@@ -12,13 +13,16 @@ import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from . import schemas as S
-from .game.room import Player, Room
+from .game.room import Player, Room, RoomVariant
 from .ws.manager import send
 
 if TYPE_CHECKING:
     from .ws.manager import RoomManager
 
 log = logging.getLogger(__name__)
+
+
+_VARIANTS: tuple[RoomVariant, ...] = ("classic", "items")
 
 
 class Matchmaker:
@@ -36,55 +40,71 @@ class Matchmaker:
         self.manager = manager
         self._on_start = on_start
         self._broadcast = broadcast
-        self._pending_id: str | None = None
-        self._countdown_task: asyncio.Task | None = None
-        self._deadline_ms: int | None = None
+        # One pending slot per variant: each tracks its own room id,
+        # countdown task, and deadline_ms.
+        self._pending: dict[RoomVariant, dict[str, object | None]] = {
+            v: {"room_id": None, "task": None, "deadline_ms": None}
+            for v in _VARIANTS
+        }
         self._lock = asyncio.Lock()
 
     @property
     def deadline_ms(self) -> int | None:
-        return self._deadline_ms
+        """Back-compat shim: classic variant's deadline, for old tests."""
+        return self._pending["classic"]["deadline_ms"]  # type: ignore[return-value]
 
-    async def enqueue(self, player: Player) -> tuple[Room, int | None]:
-        """Add player to the current pending room (creating one if needed).
-        Returns (room, deadline_ms) — deadline_ms is None if no countdown
-        is running yet.
+    def deadline_ms_for(self, variant: RoomVariant) -> int | None:
+        slot = self._pending.get(variant)
+        return slot["deadline_ms"] if slot else None  # type: ignore[return-value]
+
+    async def enqueue(
+        self, player: Player, variant: RoomVariant = "classic",
+    ) -> tuple[Room, int | None]:
+        """Add player to the current pending room for `variant` (creating
+        one if needed). Returns (room, deadline_ms) — deadline_ms is None
+        if no countdown is running yet.
         """
+        if variant not in _VARIANTS:
+            variant = "classic"
         async with self._lock:
-            room = self._current_pending_room()
+            slot = self._pending[variant]
+            room = self._current_pending_room(variant)
             if room is None:
                 room = await self.manager.create_room(
                     "random", player, capacity=self.MAX_PLAYERS,
                 )
-                self._pending_id = room.id
+                # Random rooms inherit the player-picked variant.
+                room.variant = variant
+                slot["room_id"] = room.id
             else:
                 async with room.lock:
                     room.players[player.id] = player
 
             count = len(room.players)
             if count >= self.MAX_PLAYERS:
-                self._reschedule_locked(room, self.WAIT_WHEN_FULL)
-            elif count >= self.MIN_PLAYERS and self._is_idle():
-                self._reschedule_locked(room, self.WAIT_AFTER_PAIR)
-            return room, self._deadline_ms
+                self._reschedule_locked(room, variant, self.WAIT_WHEN_FULL)
+            elif count >= self.MIN_PLAYERS and self._is_idle(variant):
+                self._reschedule_locked(room, variant, self.WAIT_AFTER_PAIR)
+            return room, slot["deadline_ms"]  # type: ignore[return-value]
 
     async def player_left(self, player_id: str, room: Room) -> None:
         """A player left a pending random room. Cancel countdown if we drop
-        below MIN_PLAYERS, drop the room entirely if it's empty.
-        """
+        below MIN_PLAYERS, drop the room slot entirely if it's empty."""
         async with self._lock:
-            if self._pending_id != room.id:
+            variant = room.variant if room.variant in _VARIANTS else "classic"
+            slot = self._pending[variant]
+            if slot["room_id"] != room.id:
                 return  # not our pending room
             future_count = len(room.players) - (1 if player_id in room.players else 0)
             if future_count < self.MIN_PLAYERS:
-                self._cancel_countdown_locked()
+                self._cancel_countdown_locked(variant)
                 if future_count >= 0:
                     # Tell remaining players the timer's off
                     asyncio.create_task(
                         self._broadcast(room, S.msg(S.MATCH_COUNTDOWN_CANCEL))
                     )
             if future_count == 0:
-                self._pending_id = None
+                slot["room_id"] = None
 
     async def announce_countdown(self, room: Room, player: Player) -> None:
         """Tell a newly-joined player the current countdown deadline.
@@ -94,51 +114,67 @@ class Matchmaker:
         so this is a unicast — sending to the whole room would double up
         every join-triggered countdown reset.
         """
-        if self._deadline_ms is None or self._pending_id != room.id:
+        variant = room.variant if room.variant in _VARIANTS else "classic"
+        slot = self._pending[variant]
+        if slot["deadline_ms"] is None or slot["room_id"] != room.id:
             return
         await send(
-            player, S.msg(S.MATCH_COUNTDOWN, deadline_ms=self._deadline_ms),
+            player, S.msg(S.MATCH_COUNTDOWN, deadline_ms=slot["deadline_ms"]),
         )
 
     # -- internal --
 
-    def _current_pending_room(self) -> Room | None:
-        if not self._pending_id:
+    def _current_pending_room(self, variant: RoomVariant) -> Room | None:
+        slot = self._pending[variant]
+        rid = slot["room_id"]
+        if not rid:
             return None
-        r = self.manager.get(self._pending_id)
+        r = self.manager.get(rid)  # type: ignore[arg-type]
         if r is None or r.state != "waiting" or len(r.players) >= self.MAX_PLAYERS:
             return None
         return r
 
-    def _is_idle(self) -> bool:
-        return self._countdown_task is None or self._countdown_task.done()
+    def _is_idle(self, variant: RoomVariant) -> bool:
+        task = self._pending[variant]["task"]
+        return task is None or task.done()  # type: ignore[union-attr]
 
-    def _reschedule_locked(self, room: Room, delay: float) -> None:
-        self._cancel_countdown_locked()
-        self._deadline_ms = int((time.time() + delay) * 1000)
-        self._countdown_task = asyncio.create_task(self._countdown(room, delay))
+    def _reschedule_locked(
+        self, room: Room, variant: RoomVariant, delay: float,
+    ) -> None:
+        self._cancel_countdown_locked(variant)
+        slot = self._pending[variant]
+        slot["deadline_ms"] = int((time.time() + delay) * 1000)
+        slot["task"] = asyncio.create_task(self._countdown(room, variant, delay))
         # Tell everyone in the room the new deadline
         asyncio.create_task(
             self._broadcast(
-                room, S.msg(S.MATCH_COUNTDOWN, deadline_ms=self._deadline_ms),
+                room, S.msg(S.MATCH_COUNTDOWN, deadline_ms=slot["deadline_ms"]),
             )
         )
 
-    def _cancel_countdown_locked(self) -> None:
-        if self._countdown_task and not self._countdown_task.done():
-            self._countdown_task.cancel()
-        self._countdown_task = None
-        self._deadline_ms = None
+    def _cancel_countdown_locked(self, variant: RoomVariant) -> None:
+        slot = self._pending[variant]
+        task = slot["task"]
+        if task is not None and not task.done():  # type: ignore[union-attr]
+            task.cancel()  # type: ignore[union-attr]
+        slot["task"] = None
+        slot["deadline_ms"] = None
 
-    async def _countdown(self, room: Room, delay: float) -> None:
+    async def _countdown(
+        self, room: Room, variant: RoomVariant, delay: float,
+    ) -> None:
         try:
             await asyncio.sleep(delay)
             async with self._lock:
-                if self._pending_id == room.id:
-                    self._pending_id = None
-                self._countdown_task = None
-                self._deadline_ms = None
-            log.info("random match starting room=%s players=%d", room.id, len(room.players))
+                slot = self._pending[variant]
+                if slot["room_id"] == room.id:
+                    slot["room_id"] = None
+                slot["task"] = None
+                slot["deadline_ms"] = None
+            log.info(
+                "random match starting room=%s variant=%s players=%d",
+                room.id, variant, len(room.players),
+            )
             await self._on_start(room)
         except asyncio.CancelledError:
             pass
