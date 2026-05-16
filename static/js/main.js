@@ -1681,6 +1681,7 @@ function startReplay() {
   $("replayControls").hidden = false;
   $("topProgress").hidden = true;
   $("replayBadge").hidden = false;
+  $("replayBadgeMobile").hidden = false;
   document.body.classList.add("on-replay");
   show("game");
   requestAnimationFrame(() => {
@@ -1705,6 +1706,7 @@ function exitReplay() {
   $("replayControls").hidden = true;
   $("topProgress").hidden = false;
   $("replayBadge").hidden = true;
+  $("replayBadgeMobile").hidden = true;
   document.body.classList.remove("on-replay");
 }
 

@@ -29,6 +29,10 @@
       <span class="mobile-combo-default">🔥 <span id="mobileComboCount">1</span></span>
       <span class="mobile-combo-trigger" hidden>🎁 콤보 5</span>
     </div>
+    <div id="replayBadgeMobile" class="replay-badge replay-badge-mobile" hidden>
+      <span class="replay-badge-icon" aria-hidden="true">🔁</span>
+      <span class="replay-badge-text">리플레이</span>
+    </div>
   </div>
   <!-- Vertical timer bar pinned to the right edge of the viewport -->
   <div id="verticalProgress" class="vertical-progress">
@@ -199,6 +203,10 @@
         <div class="toast-slot">
           <div id="itemToast" class="bar-toast item-toast" hidden></div>
           <div id="attackToast" class="bar-toast attack-toast" hidden></div>
+          <div id="replayBadge" class="replay-badge" hidden>
+            <span class="replay-badge-icon" aria-hidden="true">🔁</span>
+            <span class="replay-badge-text">리플레이 자동 재생 중</span>
+          </div>
         </div>
         <div class="combo-badge" id="comboBadge" hidden>
           <span class="combo-icon">🔥</span>
@@ -244,10 +252,6 @@
           <ul id="lbList"></ul>
         </aside>
         <main class="board-area">
-          <div id="replayBadge" class="replay-badge" hidden>
-            <span class="replay-badge-icon" aria-hidden="true">🔁</span>
-            <span class="replay-badge-text">리플레이 자동 재생 중</span>
-          </div>
           <div id="focusLabel" class="focus-label" hidden></div>
           <canvas id="board"></canvas>
           <div id="startCountdown" class="start-countdown" hidden>

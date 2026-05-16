@@ -1108,16 +1108,15 @@ button.ghost:hover {
 }
 
 /* ---- Replay indicator ---- */
-/* Inline-flex chip placed inside .board-area as the first flex child,
-   so it occupies its own row above the canvas (never covers apples).
-   The mobile-rotated game-screen rotates the whole .board-area, so the
-   badge rides along and stays readable for the user. */
+/* Desktop: lives inside .toast-slot in game-bar — the slot already has
+   reserved flex space, so showing the badge causes zero layout shift.
+   Mobile: a second badge inside .mobile-game-ui, absolutely positioned
+   next to the score/timer pill (see .replay-badge-mobile below). */
 .replay-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 5px 14px;
-  margin-bottom: 8px;
   background: rgba(247, 193, 80, 0.96);
   color: #2a1a00;
   font-weight: 800;
@@ -1127,6 +1126,7 @@ button.ghost:hover {
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .replay-badge[hidden] { display: none; }
 .replay-badge-icon {
@@ -1136,7 +1136,19 @@ button.ghost:hover {
 @keyframes replay-spin {
   to { transform: rotate(360deg); }
 }
-/* Distinguish replay frame from live play with a dashed accent border. */
+/* Mobile variant: absolute-positioned in the rotated overlay UI, sized
+   smaller and parked right of the centred score/timer pill so it shows
+   "next to" the stats without pushing them around. */
+.replay-badge-mobile {
+  position: absolute;
+  top: 6px;
+  left: calc(50% + 70px);
+  font-size: 11px;
+  padding: 3px 9px;
+  z-index: 52;
+}
+/* Yellow dashed border around the board — kept on both desktop and mobile
+   to give a board-level visual cue of replay mode. */
 body.on-replay .board-area::before {
   content: "";
   position: absolute;
