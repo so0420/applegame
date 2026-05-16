@@ -95,7 +95,7 @@ class GameAudio {
     }
   }
 
-  // -- BGM: gentle 4-chord loop (Am - F - C - G) -------------------------
+  // -- BGM: upbeat 4-chord loop (C - G - Am - F, "I-V-vi-IV") -----------
   startBgm() {
     if (!this.ctx || this.bgmPlaying) return;
     this.bgmPlaying = true;
@@ -103,10 +103,20 @@ class GameAudio {
       this.bgmGain = this.ctx.createGain();
       this.bgmGain.connect(this.masterGain);
     }
+    // Pre-bake one short noise buffer for hi-hat-like ticks. Reusing the
+    // same buffer keeps the per-tick allocation cost off the audio thread.
+    if (!this._noiseBuf) {
+      const sr = this.ctx.sampleRate;
+      const len = Math.floor(sr * 0.06);
+      const buf = this.ctx.createBuffer(1, len, sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      this._noiseBuf = buf;
+    }
     const t = this.ctx.currentTime;
     this.bgmGain.gain.cancelScheduledValues(t);
     this.bgmGain.gain.setValueAtTime(0, t);
-    this.bgmGain.gain.linearRampToValueAtTime(0.45, t + 0.6);
+    this.bgmGain.gain.linearRampToValueAtTime(0.5, t + 0.4);
     this._bgmNextStart = t + 0.05;
     this._scheduleBgmBar();
   }
@@ -127,27 +137,33 @@ class GameAudio {
 
   _scheduleBgmBar() {
     if (!this.bgmPlaying || !this.ctx) return;
-    // 100 BPM → quarter = 0.6s. 8th notes for arpeggio.
-    const beat = 0.6;
+    // 128 BPM — bouncier feel than the old 100.
+    const beat = 60 / 128;
     const eighth = beat / 2;
 
-    // Am, F, C, G — diatonic loop, two beats each = 4 bars total.
+    // I-V-vi-IV in C: C - G - Am - F (classic upbeat pop cadence).
+    // Arp is a 1-5-3-8 bounce pattern for forward motion.
     const chords = [
-      { bass: 110.00, arp: [220.00, 261.63, 329.63, 440.00, 329.63, 261.63, 329.63, 440.00] }, // Am
-      { bass:  87.31, arp: [174.61, 220.00, 261.63, 349.23, 261.63, 220.00, 261.63, 349.23] }, // F
-      { bass: 130.81, arp: [261.63, 329.63, 392.00, 523.25, 392.00, 329.63, 392.00, 523.25] }, // C
-      { bass:  98.00, arp: [196.00, 246.94, 293.66, 392.00, 293.66, 246.94, 293.66, 392.00] }, // G
+      { bass: 130.81, arp: [261.63, 392.00, 329.63, 523.25, 392.00, 329.63, 523.25, 392.00] }, // C
+      { bass:  98.00, arp: [196.00, 293.66, 246.94, 392.00, 293.66, 246.94, 392.00, 293.66] }, // G
+      { bass: 110.00, arp: [220.00, 329.63, 261.63, 440.00, 329.63, 261.63, 440.00, 329.63] }, // Am
+      { bass:  87.31, arp: [174.61, 261.63, 220.00, 349.23, 261.63, 220.00, 349.23, 261.63] }, // F
     ];
 
     let t = Math.max(this._bgmNextStart, this.ctx.currentTime + 0.02);
     for (const c of chords) {
-      // Held bass note (one per bar).
-      this._bgmBass(c.bass, t, 8 * eighth);
-      // Arpeggio of 8 short triangle notes.
+      // Short staccato bass on beats 1 and 3 — drives the groove.
+      this._bgmBass(c.bass, t,                beat * 0.55);
+      this._bgmBass(c.bass, t + 4 * eighth,   beat * 0.55);
+      // Arp eighths (triangle wave).
       let nt = t;
       for (const f of c.arp) {
         this._bgmNote(f, nt, eighth * 0.85);
         nt += eighth;
+      }
+      // Hi-hat-like ticks on off-beats (eighths 1,3,5,7) for groove.
+      for (let i = 1; i < 8; i += 2) {
+        this._bgmTick(t + i * eighth);
       }
       t += 8 * eighth;
     }
@@ -159,6 +175,25 @@ class GameAudio {
       () => this._scheduleBgmBar(),
       Math.max(50, (aheadSec - 0.3) * 1000),
     );
+  }
+
+  _bgmTick(when) {
+    const ctx = this.ctx;
+    if (!this._noiseBuf) return;
+    const src = ctx.createBufferSource();
+    src.buffer = this._noiseBuf;
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 5500;
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, when);
+    env.gain.exponentialRampToValueAtTime(0.06, when + 0.004);
+    env.gain.exponentialRampToValueAtTime(0.0001, when + 0.035);
+    src.connect(hp);
+    hp.connect(env);
+    env.connect(this.bgmGain);
+    src.start(when);
+    src.stop(when + 0.08);
   }
 
   _bgmNote(freq, when, dur) {
@@ -181,22 +216,21 @@ class GameAudio {
     const osc = ctx.createOscillator();
     osc.type = "sine";
     osc.frequency.value = freq;
-    // Lowpass to round off the attack edge and tame any 60-120 Hz boom.
+    // Lowpass softens the attack and tames any 60-120 Hz boom.
     const lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
-    lp.frequency.value = 280;
+    lp.frequency.value = 320;
     lp.Q.value = 0.5;
     const env = ctx.createGain();
-    // Soft attack, decay over the first half of the bar, then silent —
-    // a gentle pulse instead of a sustained drone so it doesn't rumble.
+    // Short staccato: snap on, decay through the pulse window, silent.
     env.gain.setValueAtTime(0.0001, when);
-    env.gain.exponentialRampToValueAtTime(0.10, when + 0.04);
-    env.gain.exponentialRampToValueAtTime(0.0001, when + dur * 0.55);
+    env.gain.exponentialRampToValueAtTime(0.12, when + 0.015);
+    env.gain.exponentialRampToValueAtTime(0.0001, when + dur);
     osc.connect(lp);
     lp.connect(env);
     env.connect(this.bgmGain);
     osc.start(when);
-    osc.stop(when + dur + 0.05);
+    osc.stop(when + dur + 0.04);
   }
 }
 
