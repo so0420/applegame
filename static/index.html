@@ -39,6 +39,9 @@
        position: fixed stays in viewport coords and transforms don't stack. -->
   <div id="sumBadge" class="sum-badge" hidden>0</div>
 
+  <!-- Persistent audio toggle. Body-direct so it stays in viewport coords. -->
+  <button id="audioToggle" class="audio-toggle" type="button" aria-label="음악 켜기/끄기" title="음악 켜기/끄기">🔊</button>
+
   <!-- Inventory hover tooltip — same body-direct placement so it stays
        in viewport coords regardless of the rotated game container. -->
   <div id="invTooltip" class="inv-tooltip" hidden>

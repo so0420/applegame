@@ -1071,6 +1071,29 @@ button.ghost:hover {
   color: white;
 }
 
+/* ---- Audio toggle (persistent floating button) ---- */
+.audio-toggle {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 200;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.audio-toggle:hover { background: var(--panel-2); }
+.audio-toggle.muted { opacity: 0.55; }
+
 /* ---- Replay indicator ---- */
 .replay-badge {
   position: absolute;

@@ -1,6 +1,7 @@
 import { GameSocket } from "./ws.js";
 import { BoardRenderer } from "./board.js";
 import { attachDragInput } from "./input.js";
+import { audio } from "./audio.js";
 
 const $ = (id) => document.getElementById(id);
 const GAME_DURATION_MS = 120 * 1000;
@@ -225,6 +226,27 @@ document.querySelectorAll(".mode").forEach((btn) => {
 $("helpOpenBtn")?.addEventListener("click", () => show("helpScreen"));
 $("helpBackBtn")?.addEventListener("click", () => show("home"));
 
+// ---- Audio: unlock on first user gesture, wire mute toggle ----
+function refreshAudioToggleUi() {
+  const btn = $("audioToggle");
+  if (!btn) return;
+  btn.classList.toggle("muted", audio.muted);
+  btn.textContent = audio.muted ? "🔇" : "🔊";
+}
+refreshAudioToggleUi();
+const _unlockOnce = () => {
+  audio.unlock();
+  window.removeEventListener("pointerdown", _unlockOnce, true);
+  window.removeEventListener("keydown", _unlockOnce, true);
+};
+window.addEventListener("pointerdown", _unlockOnce, true);
+window.addEventListener("keydown", _unlockOnce, true);
+$("audioToggle")?.addEventListener("click", () => {
+  audio.unlock();
+  audio.toggleMuted();
+  refreshAudioToggleUi();
+});
+
 // Resize all renderers when device orientation changes (rotate-hint → game)
 window.matchMedia("(orientation: portrait)").addEventListener("change", () => {
   requestAnimationFrame(() => {
@@ -446,6 +468,11 @@ async function copyText(text, successMsg) {
 
 function leaveAndGoHome() {
   exitReplay();
+  audio.stopBgm();
+  if (state._bgmStartTimer) {
+    clearTimeout(state._bgmStartTimer);
+    state._bgmStartTimer = null;
+  }
   $("resultBanner").hidden = true;
   state.ws?.send("leave");
   state.ws?.close();
@@ -755,6 +782,11 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:game_end", (e) => {
+    audio.stopBgm();
+    if (state._bgmStartTimer) {
+      clearTimeout(state._bgmStartTimer);
+      state._bgmStartTimer = null;
+    }
     showResult(e.detail);
     clearSession();
   });
@@ -859,6 +891,7 @@ function onReconnected(m) {
     startTimer();
     startProgress();
     maybeShowStartCountdown();
+    scheduleBgmAtRoundStart();
     saveSession();
     requestAnimationFrame(() => {
       state.bigRenderer.resize();
@@ -1156,10 +1189,20 @@ function onGameStart(m) {
   startTimer();
   startProgress();
   maybeShowStartCountdown();
+  scheduleBgmAtRoundStart();
   requestAnimationFrame(() => {
     state.bigRenderer.resize();
     for (const r of state.miniRenderers.values()) r.resize();
   });
+}
+
+function scheduleBgmAtRoundStart() {
+  if (state._bgmStartTimer) clearTimeout(state._bgmStartTimer);
+  const delay = Math.max(0, (state.startedAt ?? 0) - Date.now());
+  state._bgmStartTimer = setTimeout(() => {
+    state._bgmStartTimer = null;
+    audio.startBgm();
+  }, delay);
 }
 
 function setNumbersBlinded(on) {
@@ -1201,6 +1244,7 @@ function maybeShowStartCountdown() {
       void numEl.offsetWidth;
       numEl.classList.add("pulse");
       el.classList.add("go");
+      audio.countdownBeep(0);
       setTimeout(() => {
         el.hidden = true;
         el.classList.remove("go");
@@ -1214,6 +1258,7 @@ function maybeShowStartCountdown() {
     if (sec !== last) {
       last = sec;
       numEl.textContent = String(sec);
+      audio.countdownBeep(sec);
       // Restart pulse animation on each tick
       numEl.classList.remove("pulse");
       void numEl.offsetWidth;
