@@ -752,6 +752,7 @@ function bindSocket(ws) {
       }
       state.miniRenderers.get(player_id)?.setMyDrag(null);
       state.bigRenderer.setMyDrag(null);
+      audio.clearSfx(cells?.length ?? 0);
     } else {
       const mini = state.miniRenderers.get(player_id);
       if (mini) {

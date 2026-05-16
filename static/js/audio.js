@@ -78,6 +78,23 @@ class GameAudio {
     }
   }
 
+  // Successful clear: short rising blip, brighter for big clears.
+  clearSfx(cellCount = 2) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    // C major triad arpeggio, very fast — a "ding" feel.
+    this._blip(523.25, t,         0.10, "sine", 0.20); // C5
+    this._blip(659.25, t + 0.015, 0.10, "sine", 0.20); // E5
+    this._blip(783.99, t + 0.030, 0.14, "sine", 0.22); // G5
+    if (cellCount >= 4) {
+      // Big clear shimmer.
+      this._blip(1046.50, t + 0.05, 0.18, "triangle", 0.24); // C6
+    }
+    if (cellCount >= 6) {
+      this._blip(1318.51, t + 0.07, 0.20, "triangle", 0.22); // E6
+    }
+  }
+
   // -- BGM: gentle 4-chord loop (Am - F - C - G) -------------------------
   startBgm() {
     if (!this.ctx || this.bgmPlaying) return;
