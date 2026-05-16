@@ -1108,12 +1108,16 @@ button.ghost:hover {
 }
 
 /* ---- Replay indicator ---- */
-/* Lives inside the result banner so it never covers board cells. */
+/* Inline-flex chip placed inside .board-area as the first flex child,
+   so it occupies its own row above the canvas (never covers apples).
+   The mobile-rotated game-screen rotates the whole .board-area, so the
+   badge rides along and stays readable for the user. */
 .replay-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  padding: 5px 14px;
+  margin-bottom: 8px;
   background: rgba(247, 193, 80, 0.96);
   color: #2a1a00;
   font-weight: 800;
