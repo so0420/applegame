@@ -1108,15 +1108,12 @@ button.ghost:hover {
 }
 
 /* ---- Replay indicator ---- */
+/* Lives inside the result banner so it never covers board cells. */
 .replay-badge {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
+  padding: 5px 12px;
   background: rgba(247, 193, 80, 0.96);
   color: #2a1a00;
   font-weight: 800;
@@ -1124,8 +1121,8 @@ button.ghost:hover {
   letter-spacing: 1px;
   border-radius: 999px;
   pointer-events: none;
-  z-index: 8;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
 }
 .replay-badge[hidden] { display: none; }
 .replay-badge-icon {

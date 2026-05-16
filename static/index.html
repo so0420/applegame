@@ -176,6 +176,10 @@
     <!-- Game -->
     <section class="screen game-screen" id="game" hidden>
       <div id="resultBanner" class="result-banner" hidden>
+        <div id="replayBadge" class="replay-badge" hidden>
+          <span class="replay-badge-icon" aria-hidden="true">🔁</span>
+          <span class="replay-badge-text">리플레이</span>
+        </div>
         <div class="result-text">
           <strong id="resultTitle"></strong>
           <span class="muted" id="resultSubtitle"></span>
@@ -246,10 +250,6 @@
         <main class="board-area">
           <div id="focusLabel" class="focus-label" hidden></div>
           <canvas id="board"></canvas>
-          <div id="replayBadge" class="replay-badge" hidden>
-            <span class="replay-badge-icon" aria-hidden="true">🔁</span>
-            <span class="replay-badge-text">리플레이</span>
-          </div>
           <div id="startCountdown" class="start-countdown" hidden>
             <span id="startCountdownNum" class="start-countdown-num"></span>
           </div>
