@@ -1546,18 +1546,19 @@ function showResult(detail) {
 
   let title = "";
   let subtitle = "";
+  const replaySub = "🔁 리플레이 자동 재생 중 — 닫기를 누르면 멈춥니다";
   if (state.mode === "solo") {
     title = `점수 ${scores[state.playerId] ?? 0} / 170`;
-    subtitle = "리플레이가 자동 재생됩니다";
+    subtitle = replaySub;
   } else if (winner_id === null || winner_id === undefined) {
     title = "무승부 🤝";
-    subtitle = "리플레이를 둘러보세요";
+    subtitle = replaySub;
   } else if (winner_id === state.playerId) {
     title = "승리! 🎉";
-    subtitle = "리플레이를 둘러보세요";
+    subtitle = replaySub;
   } else {
     title = "패배 😢";
-    subtitle = "리플레이를 둘러보세요";
+    subtitle = replaySub;
   }
   $("resultTitle").textContent = title;
   $("resultSubtitle").textContent = subtitle;
@@ -1625,6 +1626,8 @@ function startReplay() {
   // the scrubber. We're already on the game screen.
   $("replayControls").hidden = false;
   $("topProgress").hidden = true;
+  $("replayBadge").hidden = false;
+  document.body.classList.add("on-replay");
   show("game");
   requestAnimationFrame(() => {
     state.bigRenderer.resize();
@@ -1647,6 +1650,8 @@ function exitReplay() {
   state.replayRafId = null;
   $("replayControls").hidden = true;
   $("topProgress").hidden = false;
+  $("replayBadge").hidden = true;
+  document.body.classList.remove("on-replay");
 }
 
 function replayTick(now) {
