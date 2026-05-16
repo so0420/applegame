@@ -403,6 +403,9 @@ function triggerRematch() {
       clearTimeout(state._bgmStartTimer);
       state._bgmStartTimer = null;
     }
+    // Mark the close as expected so the bound close handler doesn't
+    // pop the "연결이 종료되었습니다" reload alert.
+    state._intentionalClose = true;
     state.ws?.send("leave");
     state.ws?.close();
     clearSession();
@@ -521,6 +524,7 @@ function leaveAndGoHome() {
   }
   $("resultBanner").hidden = true;
   $("mobileResultActions").hidden = true;
+  state._intentionalClose = true;
   state.ws?.send("leave");
   state.ws?.close();
   clearSession();
@@ -580,6 +584,13 @@ function resetState() {
 // ---- Socket bindings ----
 function bindSocket(ws) {
   ws.addEventListener("close", () => {
+    // Intentional teardown by the client (leaveAndGoHome, random rematch
+    // re-queue, etc.) — swallow without alarming the user. The flag lives
+    // on `state` so it survives ws-replacement during transitions.
+    if (state._intentionalClose) {
+      state._intentionalClose = false;
+      return;
+    }
     // If the close came before any screen was shown (e.g. reconnect
     // attempt aborted), default to home.
     if (allScreensHidden()) {
