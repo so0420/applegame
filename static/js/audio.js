@@ -181,12 +181,19 @@ class GameAudio {
     const osc = ctx.createOscillator();
     osc.type = "sine";
     osc.frequency.value = freq;
+    // Lowpass to round off the attack edge and tame any 60-120 Hz boom.
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 280;
+    lp.Q.value = 0.5;
     const env = ctx.createGain();
+    // Soft attack, decay over the first half of the bar, then silent —
+    // a gentle pulse instead of a sustained drone so it doesn't rumble.
     env.gain.setValueAtTime(0.0001, when);
-    env.gain.exponentialRampToValueAtTime(0.25, when + 0.05);
-    env.gain.setValueAtTime(0.25, when + dur * 0.7);
-    env.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-    osc.connect(env);
+    env.gain.exponentialRampToValueAtTime(0.10, when + 0.04);
+    env.gain.exponentialRampToValueAtTime(0.0001, when + dur * 0.55);
+    osc.connect(lp);
+    lp.connect(env);
     env.connect(this.bgmGain);
     osc.start(when);
     osc.stop(when + dur + 0.05);
