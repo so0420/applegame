@@ -21,10 +21,19 @@ COUNTDOWN_SECS = 3.0
 # Item-mode constants
 INVENTORY_SIZE = 3
 ATTACK_LOCKOUT = 10.0           # seconds before game end where attacks are blocked
-EFFECT_BONUS = 8.0              # +1-per-clear bonus duration
 EFFECT_BLIND = 3.0              # number-hide duration
 EFFECT_HINT = 3.0               # hint highlight duration
-ITEM_KINDS = ("hint", "bonus", "blind", "shuffle")
+EFFECT_SHIELD = 8.0             # incoming-attack immunity duration
+ITEM_KINDS = ("hint", "blind", "shuffle", "shield")
+# Rank-tier weighted drops: lower-ranked players get more self-help
+# (hint, self-shuffle), mid-tier gets attack, top-tier gets defense and
+# board-reset utility. Solo / single-player rooms fall back to "middle".
+# Weights are integers; relative ratios are what matter.
+ITEM_DROP_WEIGHTS: dict[str, dict[str, int]] = {
+    "top":    {"hint": 1, "blind": 1, "shuffle": 3, "shield": 5},
+    "middle": {"hint": 2, "blind": 5, "shuffle": 2, "shield": 1},
+    "bottom": {"hint": 5, "blind": 1, "shuffle": 3, "shield": 1},
+}
 # Golden apples: a fixed number of apples are marked golden at game
 # start (same positions for every player). Clearing one grants a
 # random item into a free inventory slot; no respawn over time.
@@ -59,8 +68,8 @@ class Player:
     inventory: list[str | None] = field(
         default_factory=lambda: [None] * INVENTORY_SIZE
     )
-    bonus_until: float = 0.0        # +1-per-clear deadline (epoch s)
     blind_until: float = 0.0        # number-hide deadline imposed on me
+    shield_until: float = 0.0       # incoming-attack immunity deadline
     combo_count: int = 0            # consecutive-clear streak (within window)
     # Anti-macro state (server-side; not exposed to the client)
     submit_history: deque[float] = field(default_factory=lambda: deque(maxlen=64))
@@ -145,8 +154,8 @@ class Room:
             p.last_drag = None
             p.last_score_ts = 0.0
             p.inventory = [None] * INVENTORY_SIZE
-            p.bonus_until = 0.0
             p.blind_until = 0.0
+            p.shield_until = 0.0
             p.combo_count = 0
             p.submit_history.clear()
 
@@ -163,8 +172,8 @@ class Room:
             p.score = 0
             p.last_score_ts = 0.0
             p.inventory = [None] * INVENTORY_SIZE
-            p.bonus_until = 0.0
             p.blind_until = 0.0
+            p.shield_until = 0.0
             p.combo_count = 0
             p.submit_history.clear()
 

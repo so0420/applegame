@@ -948,6 +948,36 @@ button.ghost:hover {
   right: 2px;
   bottom: 2px;
 }
+.inv-icon {
+  pointer-events: none;
+  line-height: 1;
+}
+/* Corner ✕ — small circular discard button. pointer-events:auto so it
+   intercepts the click before it bubbles to the slot's use_item handler. */
+.inv-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(20, 20, 20, 0.72);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.1s;
+  pointer-events: auto;
+  user-select: none;
+}
+.inv-slot.has-item:hover .inv-x { opacity: 0.85; }
+.inv-x:hover { opacity: 1 !important; transform: scale(1.1); background: #c0392b; }
+.inv-slot.locked.has-item .inv-x { opacity: 0; pointer-events: none; }
+/* Mobile (touch) — always show the ✕ since hover doesn't apply. */
+.inv-slot.mobile .inv-x { opacity: 0.85; }
 
 /* Custom hover tooltip for inventory items — anchored above the slot
    via JS-computed fixed coords. Body-direct so the rotated game
@@ -1283,13 +1313,13 @@ body.on-replay .board-wrap::before {
   background: rgba(60, 60, 60, 0.18);
   color: #444;
 }
-.board-effect-overlay.bonus {
+.board-effect-overlay.shield {
   background: transparent;
-  box-shadow: inset 0 0 0 4px rgba(247, 193, 80, 0.9);
-  color: #b76e00;
+  box-shadow: inset 0 0 0 4px rgba(80, 160, 247, 0.9);
+  color: #1565c0;
 }
-.board-effect-overlay.bonus::after {
-  content: "+1";
+.board-effect-overlay.shield::after {
+  content: "🛡";
   position: absolute;
   top: 8px;
   right: 12px;

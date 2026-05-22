@@ -12,6 +12,7 @@ START = "start"          # {} (host triggers in friend; auto in others)
 DRAG_UPDATE = "drag_update"  # {r1,c1,r2,c2}
 SUBMIT = "submit"        # {r1,c1,r2,c2}
 USE_ITEM = "use_item"    # {slot} 0|1 (items variant only)
+DISCARD_ITEM = "discard_item"  # {slot} (items variant only)
 REMATCH = "rematch"      # {}
 LEAVE = "leave"          # {}
 
@@ -39,7 +40,8 @@ GAME_END = "game_end"         # {scores, winner_id}
 ERROR = "error"               # {code, message}
 # Item-mode messages
 ITEM_ACQUIRED = "item_acquired"   # {player_id, slot, item, t_ms}
-ITEM_USED = "item_used"           # {by, item, target_id?, slot, t_ms}
+ITEM_USED = "item_used"           # {by, item, target_id?, slot, t_ms, blocked?}
+ITEM_DISCARDED = "item_discarded" # {slot} — echo so client clears the slot
 EFFECT_START = "effect_start"     # {target_id, effect, until_ms, hint?, t_ms}
 EFFECT_END = "effect_end"         # {target_id, effect, t_ms}
 BOARD_UPDATE = "board_update"     # {target_id, board, t_ms} — after shuffle

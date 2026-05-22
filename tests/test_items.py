@@ -306,7 +306,7 @@ def test_clearing_golden_grants_item_and_shrinks_set():
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         _drain_until(host, "clear")
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "bonus", "blind", "shuffle")
+        assert acq["item"] in ("hint", "blind", "shuffle", "shield")
         # The (0,0) golden has been consumed
         assert (0, 0) not in room.golden[host_id]
         # And actually stored in inventory
@@ -331,7 +331,7 @@ def test_big_clear_grants_item_instantly():
         clear = _drain_until(host, "clear")
         assert len(clear["cells"]) == 5
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "bonus", "blind", "shuffle")
+        assert acq["item"] in ("hint", "blind", "shuffle", "shield")
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)
@@ -357,7 +357,7 @@ def test_combo_threshold_clears_grant_item():
         assert clear["combo"] == 0       # reset right after the drop
         assert clear["combo_triggered"] is True
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "bonus", "blind", "shuffle")
+        assert acq["item"] in ("hint", "blind", "shuffle", "shield")
         assert room.players[host_id].combo_count == 0
     finally:
         h_ctx.__exit__(None, None, None)
@@ -447,7 +447,7 @@ def test_simultaneous_triggers_grant_only_one_item():
         assert clear["combo"] == 0
         # Exactly one item_acquired should follow, then no more.
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "bonus", "blind", "shuffle")
+        assert acq["item"] in ("hint", "blind", "shuffle", "shield")
         # Confirm no second item_acquired comes through.
         host.send_json({"type": "rename", "nickname": "ok"})
         nxt = host.receive_json()
@@ -490,7 +490,7 @@ def test_golden_clear_with_full_inventory_consumes_cell_without_drop():
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
         host_player = room.players[host_id]
-        host_player.inventory = ["hint", "bonus", "blind"]  # full
+        host_player.inventory = ["hint", "shield", "blind"]  # full
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         room.boards[host_id][0][0] = 5
         room.boards[host_id][0][1] = 5
@@ -503,7 +503,7 @@ def test_golden_clear_with_full_inventory_consumes_cell_without_drop():
         msg = host.receive_json()
         assert msg["type"] == "renamed"
         assert (0, 0) not in room.golden[host_id]
-        assert host_player.inventory == ["hint", "bonus", "blind"]
+        assert host_player.inventory == ["hint", "shield", "blind"]
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)
@@ -514,15 +514,15 @@ def test_events_recorded_for_replay():
     room.events so the post-game replay can reconstruct the round."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
-        # 1) Use a self-effect item (bonus) by hand
+        # 1) Use a self-effect item (shield) by hand
         host_player = room.players[host_id]
-        host_player.inventory[0] = "bonus"
+        host_player.inventory[0] = "shield"
         host.send_json({"type": "use_item", "slot": 0})
         for _ in range(2):  # item_used + effect_start
             host.receive_json()
             guest.receive_json()
 
-        # 2) Use shuffle (attack on guest)
+        # 2) Use shuffle (self-shuffle — own board reshuffles)
         host_player.inventory[0] = "shuffle"
         host.send_json({"type": "use_item", "slot": 0})
         for _ in range(2):  # item_used + board_update
@@ -543,8 +543,8 @@ def test_events_recorded_for_replay():
         g_ctx.__exit__(None, None, None)
 
 
-def test_use_item_bonus_sets_deadline(monkeypatch):
-    """Activating 'bonus' sets bonus_until in the future."""
+def test_use_item_shield_sets_deadline(monkeypatch):
+    """Activating 'shield' sets shield_until in the future."""
     client = TestClient(app)
     with client.websocket_connect("/ws") as host:
         host.send_json({"type": "hello", "intent": "create"})
@@ -564,7 +564,7 @@ def test_use_item_bonus_sets_deadline(monkeypatch):
             from app.main import manager
             room = manager.get(room_id)
             host_player = room.players[host_id]
-            host_player.inventory[0] = "bonus"
+            host_player.inventory[0] = "shield"
 
             t0 = time.time()
             host.send_json({"type": "use_item", "slot": 0})
@@ -573,11 +573,164 @@ def test_use_item_bonus_sets_deadline(monkeypatch):
             saw_effect = False
             for _ in range(4):
                 m = host.receive_json()
-                if m["type"] == "item_used" and m["item"] == "bonus":
+                if m["type"] == "item_used" and m["item"] == "shield":
                     saw_used = True
-                if m["type"] == "effect_start" and m.get("effect") == "bonus":
+                if m["type"] == "effect_start" and m.get("effect") == "shield":
                     saw_effect = True
                 if saw_used and saw_effect:
                     break
             assert saw_used and saw_effect
-            assert host_player.bonus_until > t0
+            assert host_player.shield_until > t0
+
+
+# ------------------------------------------------------------------
+# Shield / shuffle-self / discard / weighted-drop tests
+# ------------------------------------------------------------------
+
+def test_shuffle_targets_self_not_opponent():
+    """Self-shuffle: only the user's own board changes; opponent untouched."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # Snapshot opponent board before shuffle.
+        guest_board_before = [row[:] for row in room.boards[guest_id]]
+        host_player = room.players[host_id]
+        host_player.inventory[0] = "shuffle"
+        host.send_json({"type": "use_item", "slot": 0})
+        # Drain item_used + board_update (target = host)
+        saw_board_update_target = None
+        for _ in range(4):
+            m = host.receive_json()
+            if m["type"] == "board_update":
+                saw_board_update_target = m["target_id"]
+                break
+        assert saw_board_update_target == host_id
+        # Opponent board unchanged.
+        assert room.boards[guest_id] == guest_board_before
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_shield_blocks_incoming_blind():
+    """Blind hitting a shielded target: slot consumed, blocked=True, no
+    effect_start broadcast, target's blind_until stays 0."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # Pre-arm: guest already has shield active.
+        room.players[guest_id].shield_until = time.time() + 5.0
+        host_player = room.players[host_id]
+        host_player.inventory[0] = "blind"
+        host.send_json({"type": "use_item", "slot": 0})
+        # Collect a few messages; item_used must come with blocked=True
+        seen_blocked = False
+        for _ in range(3):
+            m = host.receive_json()
+            if m["type"] == "item_used" and m["item"] == "blind":
+                seen_blocked = m.get("blocked") is True
+                break
+        assert seen_blocked
+        # blind effect must NOT have applied.
+        assert room.players[guest_id].blind_until == 0.0
+        # Slot is consumed.
+        assert host_player.inventory[0] is None
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_shield_cleanses_active_blind():
+    """Activating shield while blinded ends the blind immediately and
+    broadcasts effect_end for blind."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        host_player = room.players[host_id]
+        host_player.blind_until = time.time() + 30.0  # blind active
+        host_player.inventory[0] = "shield"
+        host.send_json({"type": "use_item", "slot": 0})
+        # Drain messages; look for effect_end with effect=blind
+        saw_blind_end = False
+        for _ in range(6):
+            m = host.receive_json()
+            if m["type"] == "effect_end" and m.get("effect") == "blind":
+                saw_blind_end = True
+                break
+        assert saw_blind_end
+        assert host_player.blind_until == 0.0
+        assert host_player.shield_until > time.time()
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_discard_item_clears_slot():
+    """discard_item empties the slot and echoes item_discarded back."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        host_player = room.players[host_id]
+        host_player.inventory[0] = "hint"
+        host.send_json({"type": "discard_item", "slot": 0})
+        m = _drain_until(host, "item_discarded")
+        assert m["slot"] == 0
+        assert host_player.inventory[0] is None
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_discard_item_empty_slot_is_noop():
+    """Discarding an empty slot doesn't send item_discarded."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        host.send_json({"type": "discard_item", "slot": 0})
+        host.send_json({"type": "rename", "nickname": "x"})
+        m = host.receive_json()
+        assert m["type"] == "renamed"
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_weighted_drop_respects_tier_distribution():
+    """Top tier should overwhelmingly favor shield; bottom should favor hint.
+    Sample enough that random variance can't flip the dominant kind."""
+    import random as _r
+    from app.ws.handlers import _weighted_drop
+
+    _r.seed(7)
+    top_counts = {"hint": 0, "blind": 0, "shuffle": 0, "shield": 0}
+    bot_counts = {"hint": 0, "blind": 0, "shuffle": 0, "shield": 0}
+    for _ in range(2000):
+        top_counts[_weighted_drop("top")] += 1
+        bot_counts[_weighted_drop("bottom")] += 1
+    assert top_counts["shield"] == max(top_counts.values())
+    assert bot_counts["hint"] == max(bot_counts.values())
+
+
+def test_player_tier_buckets_by_score():
+    """3+ players are split into thirds by score rank."""
+    from app.ws.handlers import _player_tier
+    from app.game.room import Room, Player
+
+    room = Room(id="x", mode="friend")
+    for i, s in enumerate([100, 80, 60, 40, 20, 0]):
+        pid = f"p{i}"
+        room.players[pid] = Player(id=pid, nickname=pid, score=s)
+    # Ranks: p0(100), p1(80), p2(60), p3(40), p4(20), p5(0)
+    # 6 players → top is idx 0..1, middle 2..3, bottom 4..5
+    assert _player_tier(room, "p0") == "top"
+    assert _player_tier(room, "p1") == "top"
+    assert _player_tier(room, "p2") == "middle"
+    assert _player_tier(room, "p3") == "middle"
+    assert _player_tier(room, "p4") == "bottom"
+    assert _player_tier(room, "p5") == "bottom"
+
+
+def test_player_tier_two_player_maps_top_and_bottom():
+    from app.ws.handlers import _player_tier
+    from app.game.room import Room, Player
+
+    room = Room(id="x", mode="friend")
+    room.players["a"] = Player(id="a", nickname="a", score=10)
+    room.players["b"] = Player(id="b", nickname="b", score=0)
+    assert _player_tier(room, "a") == "top"
+    assert _player_tier(room, "b") == "bottom"

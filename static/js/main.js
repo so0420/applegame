@@ -59,7 +59,7 @@ const state = {
   matchTickerId: null,
   // Item-mode local state
   inventory: [null, null, null],
-  effects: { bonus: 0, blind: 0, hint: 0 },  // expiry ms
+  effects: { shield: 0, blind: 0, hint: 0 },  // expiry ms
   effectTimers: {},
   initialGolden: [],   // [[r,c], ...] picked at game start
   combo: 0,
@@ -67,9 +67,9 @@ const state = {
 
 const ITEM_META = {
   hint:    { icon: "🔍", label: "힌트",  attack: false, desc: "내 보드에 합10 쌍 강조 (3초)" },
-  bonus:   { icon: "➕", label: "추가 점수", attack: false, desc: "8초간 클리어할 때마다 점수 +1" },
   blind:   { icon: "🙈", label: "숫자 숨김", attack: true, desc: "상대 1명 숫자 3초 가림" },
-  shuffle: { icon: "🔀", label: "셔플", attack: true, desc: "상대 1명 보드 재배치" },
+  shuffle: { icon: "🔀", label: "셔플", attack: false, desc: "내 보드 남은 사과 무작위 재배치" },
+  shield:  { icon: "🛡", label: "방어",  attack: false, desc: "8초간 받는 공격 무효 + 적용된 방해 즉시 해제" },
 };
 
 const sumBadge = $("sumBadge");
@@ -81,9 +81,19 @@ state.bigRenderer = new BoardRenderer(canvas);
 // apply back on reject.
 state._pendingSubmits = [];
 
+function isRoundOver() {
+  // True once the round timer has elapsed. Used to gate input after
+  // game_end so closing the replay doesn't reopen play on a finished room.
+  return !!(state.endsAt && Date.now() >= state.endsAt);
+}
+
 attachDragInput(canvas, state.bigRenderer, {
   onUpdate: (rect) => {
     if (state.replayActive) return;
+    if (isRoundOver()) {
+      sumBadge.hidden = true;
+      return;
+    }
     if (state.focusedPlayerId !== state.playerId) return; // viewing only
     if (state.startedAt && Date.now() < state.startedAt) {
       sumBadge.hidden = true;
@@ -112,6 +122,7 @@ attachDragInput(canvas, state.bigRenderer, {
   onSubmit: (rect) => {
     sumBadge.hidden = true;
     if (state.replayActive) return;
+    if (isRoundOver()) return;
     if (state.focusedPlayerId !== state.playerId) return;
     if (state.startedAt && Date.now() < state.startedAt) return;
 
@@ -300,11 +311,26 @@ document.querySelectorAll(".variant-btn").forEach((btn) => {
 });
 
 // ---- Inventory click ----
+function discardSlot(slot) {
+  if (!Number.isInteger(slot)) return;
+  if (!state.inventory[slot]) return;
+  if (state.replayActive || isRoundOver()) return;
+  hideInvTooltip();
+  state.ws?.send("discard_item", { slot });
+}
+
 document.querySelectorAll(".inv-slot").forEach((btn) => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", (ev) => {
     const slot = parseInt(btn.dataset.slot, 10);
     if (!Number.isInteger(slot)) return;
     if (!state.inventory[slot]) return;
+    if (state.replayActive || isRoundOver()) return;
+    // ✕ corner click → discard instead of use.
+    if (ev.target.classList?.contains("inv-x")) {
+      ev.stopPropagation();
+      discardSlot(slot);
+      return;
+    }
     if (btn.classList.contains("locked")) {
       showItemToast("⏳ 마지막 10초엔 공격 아이템을 쓸 수 없어요");
       return;
@@ -312,6 +338,39 @@ document.querySelectorAll(".inv-slot").forEach((btn) => {
     hideInvTooltip();  // slot will be consumed; clear lingering tooltip
     state.ws?.send("use_item", { slot });
   });
+  // Right-click → discard (desktop).
+  btn.addEventListener("contextmenu", (ev) => {
+    const slot = parseInt(btn.dataset.slot, 10);
+    if (!Number.isInteger(slot) || !state.inventory[slot]) return;
+    ev.preventDefault();
+    discardSlot(slot);
+  });
+  // Long-press → discard (mobile). 550ms threshold to avoid clashing
+  // with the tap-to-use gesture.
+  let pressTimer = null;
+  let longPressed = false;
+  btn.addEventListener("touchstart", () => {
+    longPressed = false;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      const slot = parseInt(btn.dataset.slot, 10);
+      if (state.inventory[slot]) {
+        longPressed = true;
+        if (navigator.vibrate) navigator.vibrate(15);
+        discardSlot(slot);
+      }
+    }, 550);
+  }, { passive: true });
+  const cancelLong = () => clearTimeout(pressTimer);
+  btn.addEventListener("touchend", (ev) => {
+    cancelLong();
+    if (longPressed) {
+      // Swallow the trailing click so use_item doesn't also fire.
+      ev.preventDefault();
+    }
+  });
+  btn.addEventListener("touchmove", cancelLong, { passive: true });
+  btn.addEventListener("touchcancel", cancelLong);
 });
 
 // ---- Inventory hover tooltip (desktop only — mobile rotated UI has no
@@ -552,7 +611,7 @@ function resetState() {
   state.matchDeadlineMs = null;
   state.variant = "classic";
   state.inventory = [null, null, null];
-  state.effects = { bonus: 0, blind: 0, hint: 0 };
+  state.effects = { shield: 0, blind: 0, hint: 0 };
   state.initialGolden = [];
   $("inventory").hidden = true;
   $("mobileInventory").hidden = true;
@@ -665,16 +724,27 @@ function bindSocket(ws) {
     if (meta) showItemToast(`${meta.icon} ${meta.label} 획득!`);
   });
 
+  ws.addEventListener("msg:item_discarded", (e) => {
+    const { slot } = e.detail;
+    if (typeof slot === "number") {
+      state.inventory[slot] = null;
+      renderInventory();
+      showItemToast("🗑 아이템 버림");
+    }
+  });
+
   ws.addEventListener("msg:item_used", (e) => {
-    const { by, item, target_id, slot, t_ms } = e.detail;
-    state.events.push({ kind: "item_used", t_ms: t_ms ?? 0, by, item, target_id });
+    const { by, item, target_id, slot, t_ms, blocked } = e.detail;
+    state.events.push({
+      kind: "item_used", t_ms: t_ms ?? 0, by, item, target_id, blocked: !!blocked,
+    });
     // Server clears the slot — mirror that locally so the inventory UI
     // empties immediately for the player who triggered the use.
     if (by === state.playerId && typeof slot === "number") {
       state.inventory[slot] = null;
       renderInventory();
     }
-    showItemUsedToast(by, item, target_id);
+    showItemUsedToast(by, item, target_id, !!blocked);
   });
 
   ws.addEventListener("msg:effect_start", (e) => {
@@ -926,7 +996,7 @@ function onReconnected(m) {
       if (item) item.li.classList.add("disconnected");
     }
   }
-  // Restore active effects (blind / bonus / hint) from the events log.
+  // Restore active effects (blind / shield / hint) from the events log.
   // Pair every effect_start with its effect_end; anything still open and
   // not yet expired needs its visual re-applied so the player sees the
   // same state they had before disconnect.
@@ -978,12 +1048,16 @@ function renderInventory() {
     const item = state.inventory[slot];
     if (item && ITEM_META[item]) {
       btn.classList.add("has-item");
-      btn.textContent = ITEM_META[item].icon;
+      // Icon + ✕ button (corner discard). Re-render rather than mutate so
+      // we don't need to track per-slot child nodes across re-renders.
+      btn.innerHTML =
+        `<span class="inv-icon">${ITEM_META[item].icon}</span>` +
+        `<span class="inv-x" role="button" aria-label="버리기" title="버리기 (우클릭/롱프레스)">✕</span>`;
       const isAttack = ITEM_META[item].attack;
       btn.classList.toggle("locked", isAttack && locked);
     } else {
       btn.classList.remove("has-item", "locked");
-      btn.textContent = "";
+      btn.innerHTML = "";
     }
   }
   // If a slot the user is currently hovering changed contents, hide the
@@ -1026,7 +1100,7 @@ function showBoardEffect(kind, durationMs) {
   if (!el) {
     el = document.createElement("div");
     el.className = `board-effect-overlay ${kind}`;
-    const labels = { bonus: "+1 SCORE", blind: "🙈 숫자 숨김", shuffle: "🔀 SHUFFLE" };
+    const labels = { shield: "🛡 SHIELD", blind: "🙈 숫자 숨김", shuffle: "🔀 SHUFFLE" };
     el.textContent = labels[kind] || "";
     // Attach to .board-wrap so the overlay hugs the canvas exactly,
     // matching the replay border. board-area would extend past the
@@ -1046,28 +1120,33 @@ function hideBoardEffect(kind) {
   setTimeout(() => { el.remove(); }, 220);
 }
 
-function showItemUsedToast(by, item, target_id) {
+function showItemUsedToast(by, item, target_id, blocked = false) {
   const meta = ITEM_META[item];
   if (!meta) return;
   const byPlayer = state.room?.players.find((p) => p.id === by);
   const byName = byPlayer?.nickname ?? "?";
+  const blockSuffix = blocked ? " — 🛡 방어됨" : "";
   if (by === state.playerId) {
-    showItemToast(`${meta.icon} ${meta.label} 사용`);
+    showItemToast(`${meta.icon} ${meta.label} 사용${blockSuffix}`);
   } else if (target_id === state.playerId && meta.attack) {
-    showAttackToast(`${byName}님이 ${meta.icon} ${meta.label}!`);
+    if (blocked) {
+      showItemToast(`🛡 ${byName}님의 ${meta.icon} ${meta.label} 방어!`);
+    } else {
+      showAttackToast(`${byName}님이 ${meta.icon} ${meta.label}!`);
+    }
   } else if (meta.attack && target_id) {
     const target = state.room?.players.find((p) => p.id === target_id);
     const tName = target?.nickname ?? "?";
-    showItemToast(`${byName} → ${tName} (${meta.icon} ${meta.label})`);
+    showItemToast(`${byName} → ${tName} (${meta.icon} ${meta.label})${blockSuffix}`);
   }
 }
 
 function applyEffectStart(target_id, effect, until_ms, hint) {
   const remainingMs = (until_ms ?? Date.now()) - Date.now();
   if (target_id === state.playerId) {
-    if (effect === "bonus") {
-      state.effects.bonus = until_ms;
-      showBoardEffect("bonus", remainingMs);
+    if (effect === "shield") {
+      state.effects.shield = until_ms;
+      showBoardEffect("shield", remainingMs);
     } else if (effect === "blind") {
       state.effects.blind = until_ms;
       state.bigRenderer.setBlind(true);
@@ -1088,9 +1167,9 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
 }
 
 function applyEffectEnd(target_id, effect) {
-  if (effect === "bonus" && target_id === state.playerId) {
-    state.effects.bonus = 0;
-    hideBoardEffect("bonus");
+  if (effect === "shield" && target_id === state.playerId) {
+    state.effects.shield = 0;
+    hideBoardEffect("shield");
   } else if (effect === "blind") {
     if (target_id === state.playerId) state.effects.blind = 0;
     const mini = state.miniRenderers.get(target_id);
@@ -1130,7 +1209,7 @@ function clearAllEffectVisuals() {
     r.setHint(null);
     r.clearGolden();
   }
-  hideBoardEffect("bonus");
+  hideBoardEffect("shield");
   hideBoardEffect("blind");
   hideBoardEffect("shuffle");
   setCombo(0);
@@ -1214,7 +1293,7 @@ function onGameStart(m) {
   state.events = [];
   state.variant = m.variant || state.variant || "classic";
   state.inventory = [null, null, null];
-  state.effects = { bonus: 0, blind: 0, hint: 0 };
+  state.effects = { shield: 0, blind: 0, hint: 0 };
   renderInventory();
   // Match countdown done — clear it
   state.matchDeadlineMs = null;
@@ -1422,7 +1501,7 @@ function renderLobby() {
     });
     $("variantHelper").textContent = isHost
       ? (state.variant === "items"
-          ? "황금 사과를 합10에 포함시키면 랜덤 아이템 (🔍힌트 ➕추가점수 🙈숨김 🔀셔플) 획득"
+          ? "황금 사과를 합10에 포함시키면 랜덤 아이템 (🔍힌트 🙈숨김 🔀셔플 🛡방어) 획득"
           : "원하면 아이템전으로 바꿔보세요")
       : `호스트가 모드를 정합니다 (현재 ${state.variant === "items" ? "아이템전" : "클래식"})`;
   }
@@ -1825,7 +1904,7 @@ function applyReplayEventsBetween(fromMs, toMs, animate) {
     } else if (kind === "effect_end") {
       applyEffectEnd(ev.target_id, ev.effect);
     } else if (kind === "item_used") {
-      if (animate) showItemUsedToast(ev.by, ev.item, ev.target_id);
+      if (animate) showItemUsedToast(ev.by, ev.item, ev.target_id, !!ev.blocked);
     }
   }
   state.scores = { ...state.replayCumScores };

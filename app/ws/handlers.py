@@ -24,10 +24,11 @@ from ..game.room import (
     COMBO_THRESHOLD,
     COMBO_WINDOW_S,
     EFFECT_BLIND,
-    EFFECT_BONUS,
     EFFECT_HINT,
+    EFFECT_SHIELD,
     GAME_DURATION,
     INVENTORY_SIZE,
+    ITEM_DROP_WEIGHTS,
     ITEM_KINDS,
     MAX_SUBMITS_PER_1S,
     MAX_SUBMITS_PER_3S,
@@ -42,7 +43,7 @@ log = logging.getLogger(__name__)
 
 DISCONNECT_GRACE = 300.0  # seconds — keep room alive when all players disconnected
 
-ATTACK_ITEMS = {"blind", "shuffle"}
+ATTACK_ITEMS = {"blind"}
 
 
 def _t_ms(room: Room) -> int:
@@ -301,6 +302,13 @@ async def _message_loop(
                 continue
             await _handle_use_item(room, player, data)
 
+        elif mtype == S.DISCARD_ITEM:
+            if room.state != "playing":
+                continue
+            if room.variant != "items":
+                continue
+            await _handle_discard_item(room, player, data)
+
         elif mtype == S.REMATCH:
             await _handle_rematch(room, player)
 
@@ -374,11 +382,6 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         player.submit_history.append(now)
         prev_clear_ts = player.last_score_ts
         gained = len(cells)
-        # Bonus item: +1 point per successful submit while active. The
-        # underlying apples_left still tracks raw cells removed, but the
-        # display score gets the extra point on top of the cleared count.
-        if room.variant == "items" and player.bonus_until > now:
-            gained += 1
         player.score += gained
         player.last_score_ts = now
         room.apples_left[player.id] -= len(cells)
@@ -426,7 +429,8 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
                     None,
                 )
                 if free_slot is not None:
-                    item = random.choice(ITEM_KINDS)
+                    tier = _player_tier(room, player.id)
+                    item = _weighted_drop(tier)
                     player.inventory[free_slot] = item
                     item_msg = S.msg(
                         S.ITEM_ACQUIRED,
@@ -452,6 +456,38 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         # Only the receiving player needs to know which item dropped —
         # opponents only see the inventory count update via room state.
         await send(player, item_msg)
+
+
+def _player_tier(room: Room, player_id: str) -> str:
+    """Bucket the player into top / middle / bottom by current score.
+
+    Solo or single-player rooms always return "middle" so the drop pool
+    stays neutral. Two-player rooms map rank-1 → top, rank-2 → bottom.
+    For 3+ players we split into rough thirds.
+    """
+    players = sorted(
+        room.players.values(),
+        key=lambda p: (-p.score, p.last_score_ts or float("inf")),
+    )
+    n = len(players)
+    if n <= 1:
+        return "middle"
+    idx = next((i for i, p in enumerate(players) if p.id == player_id), 0)
+    if n == 2:
+        return "top" if idx == 0 else "bottom"
+    if idx * 3 < n:
+        return "top"
+    if idx * 3 < 2 * n:
+        return "middle"
+    return "bottom"
+
+
+def _weighted_drop(tier: str) -> str:
+    """Pick an item kind using the tier-specific weight table."""
+    weights = ITEM_DROP_WEIGHTS.get(tier) or ITEM_DROP_WEIGHTS["middle"]
+    items = list(weights.keys())
+    ws = list(weights.values())
+    return random.choices(items, weights=ws, k=1)[0]
 
 
 def _pick_attack_target(room: Room, attacker_id: str) -> str | None:
@@ -496,31 +532,42 @@ async def _handle_use_item(
             ))
             return
         target_id: str | None = None
+        blocked = False
+        cleared_blind = False
         if item == "hint":
             pair = find_sum10_pair(room.boards.get(player.id, []))
             payload["hint"] = [{"r": r, "c": c} for (r, c) in (pair or [])]
             target_id = player.id
             until = now + EFFECT_HINT
-        elif item == "bonus":
-            target_id = player.id
-            player.bonus_until = now + EFFECT_BONUS
-            until = player.bonus_until
         elif item == "blind":
             target_id = _pick_attack_target(room, player.id)
             if target_id is None:
                 return
             target = room.players[target_id]
-            target.blind_until = now + EFFECT_BLIND
-            until = target.blind_until
+            # Shield on the target blocks the incoming attack — the
+            # attacker's slot still burns, but no blind effect applies.
+            if target.shield_until > now:
+                blocked = True
+                until = now
+            else:
+                target.blind_until = now + EFFECT_BLIND
+                until = target.blind_until
         elif item == "shuffle":
-            target_id = _pick_attack_target(room, player.id)
-            if target_id is None:
-                return
-            target_board = room.boards.get(target_id)
+            # Self-shuffle — re-rolls the player's own remaining apples.
+            target_id = player.id
+            target_board = room.boards.get(player.id)
             if target_board is None:
                 return
             shuffle_remaining(target_board)
             until = now  # one-shot effect
+        elif item == "shield":
+            target_id = player.id
+            player.shield_until = now + EFFECT_SHIELD
+            until = player.shield_until
+            # Shield also cleanses an active blind on the user.
+            if player.blind_until > now:
+                player.blind_until = 0.0
+                cleared_blind = True
         else:
             return
         # Consume the slot
@@ -533,7 +580,16 @@ async def _handle_use_item(
             "by": player.id,
             "item": item,
             "target_id": target_id,
+            "blocked": blocked,
         })
+        if cleared_blind:
+            # Record the cleansed blind so replay shows it ending here.
+            room.events.append({
+                "kind": "effect_end",
+                "t_ms": t_ms,
+                "target_id": player.id,
+                "effect": "blind",
+            })
 
     used_msg = S.msg(
         S.ITEM_USED,
@@ -542,8 +598,20 @@ async def _handle_use_item(
         target_id=payload.get("target_id"),
         slot=slot,
         t_ms=t_ms,
+        blocked=blocked,
     )
     await broadcast(room, used_msg)
+
+    if cleared_blind:
+        await broadcast(
+            room,
+            S.msg(S.EFFECT_END, target_id=player.id, effect="blind", t_ms=t_ms),
+        )
+
+    if blocked:
+        # Attack fizzled — slot was consumed, but no effect_start should
+        # fire and no follow-up tasks are scheduled.
+        return
 
     if item == "shuffle":
         # Tell every client the new board for the target so optimistic
@@ -592,6 +660,26 @@ async def _handle_use_item(
     delay = max(0.0, until - now)
     if delay > 0:
         asyncio.create_task(_clear_effect_after(room, target_id, item, delay))
+
+
+async def _handle_discard_item(
+    room: Room, player: Player, data: dict[str, Any]
+) -> None:
+    """Throw away an inventory slot without using its effect.
+
+    No broadcast — discard is private. Other players don't see inventory
+    contents anyway, so there's nothing meaningful to tell them.
+    """
+    slot = data.get("slot")
+    if not isinstance(slot, int) or not (0 <= slot < INVENTORY_SIZE):
+        return
+    async with room.lock:
+        if room.state != "playing":
+            return
+        if player.inventory[slot] is None:
+            return
+        player.inventory[slot] = None
+    await send(player, S.msg(S.ITEM_DISCARDED, slot=slot))
 
 
 async def _clear_effect_after(
