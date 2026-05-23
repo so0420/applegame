@@ -12,21 +12,29 @@ function rectsEqual(a, b) {
   return a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
 }
 
-const APPLE_RED = "#e53935";
-const APPLE_DARK = "#b71c1c";
-const TEXT_COLOR = "#ffffff";
-const BOARD_BG = "#ffffff";
-const EMPTY_COLOR = "#f0f1f3";
-const ME_BOX = "rgba(25, 118, 210, 0.18)";
-const ME_BOX_OK = "rgba(46, 125, 50, 0.28)";
-const ME_STROKE = "#1976d2";
-const ME_STROKE_OK = "#2e7d32";
-const OPP_BOX = "rgba(198, 40, 40, 0.18)";
-const OPP_STROKE = "#c62828";
-const GOLD = "#f6c244";
-const GOLD_DARK = "#c98a10";
-const HINT_FILL = "rgba(255, 235, 59, 0.55)";
-const HINT_STROKE = "#fbc02d";
+// Warm cream/sage palette — matches the new CSS design tokens.
+const APPLE_LIGHT = "#E5675A";     // top-left highlight side
+const APPLE_BASE  = "#C44536";     // mid body
+const APPLE_DEEP  = "#8E2D24";     // bottom-right shading
+const APPLE_OUTLINE = "rgba(70,20,15,0.18)";
+const LEAF_LIGHT = "#7AA876";
+const LEAF_DEEP  = "#4A6B4A";
+const STEM_COLOR = "#5A3E2B";
+const TEXT_COLOR = "#FFFFFF";
+const BOARD_BG = "transparent";
+const EMPTY_COLOR = "rgba(91, 117, 83, 0.06)";  // sage-tinted hollow
+const ME_BOX = "rgba(91, 117, 83, 0.16)";       // sage drag
+const ME_BOX_OK = "rgba(91, 117, 83, 0.34)";    // sum=10 → stronger sage
+const ME_STROKE = "#5B7553";
+const ME_STROKE_OK = "#3E5A38";
+const OPP_BOX = "rgba(196, 69, 54, 0.16)";
+const OPP_STROKE = "#C44536";
+const GOLD_LIGHT = "#F5D27A";
+const GOLD_BASE  = "#E5A21F";
+const GOLD_DEEP  = "#A07015";
+const GOLD_OUTLINE = "rgba(80,50,5,0.22)";
+const HINT_FILL = "rgba(229, 162, 31, 0.22)";
+const HINT_STROKE = "#E5A21F";
 
 export class BoardRenderer {
   constructor(canvas, options = {}) {
@@ -47,6 +55,11 @@ export class BoardRenderer {
     this.blind = false;             // hide numeric values
     this.hintCells = null;          // [[r,c], ...]
     this._shakeUntil = 0;
+    // Pre-built Path2D for the apple silhouette / leaf in unit coords (0..1).
+    // Drawn once, scaled per-cell — cheaper than rebuilding bezier curves
+    // for every one of the 170 cells per frame.
+    this._applyBodyPath = _buildAppleBodyPath();
+    this._applyLeafPath = _buildLeafPath();
     // Keep bound refs so dispose() can actually removeEventListener them.
     // Inline arrow functions would leak — the listener stays attached to
     // window forever and keeps the whole renderer alive via closure.
@@ -279,8 +292,11 @@ export class BoardRenderer {
     const cs = this.cellSize;
     const pad = this.padding;
 
-    ctx.fillStyle = BOARD_BG;
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    if (BOARD_BG !== "transparent") {
+      ctx.fillStyle = BOARD_BG;
+      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    }
 
     if (!this.board) return;
 
@@ -355,69 +371,114 @@ export class BoardRenderer {
 
   _drawApple(x, y, cs, value, alpha = 1, scale = 1, opts = {}) {
     const ctx = this.ctx;
-    const cx = x + cs / 2;
-    const cy = y + cs / 2;
-    const margin = this.mini ? 0.5 : 2;
-    const r = (cs / 2 - margin) * scale;
     const gold = !!opts.gold;
     const hideNumber = !!opts.hideNumber;
+
+    // Tiny cells (mini leaderboard boards) can't carry the detailed
+    // silhouette legibly — fall back to a clean filled lobe + leaf dot.
+    if (this.mini || cs < 16) {
+      const cx = x + cs / 2;
+      const cy = y + cs / 2;
+      const r = (cs / 2 - (this.mini ? 0.5 : 1.5)) * scale;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = gold ? GOLD_BASE : APPLE_BASE;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Single leaf nub so even minis read as "apple".
+      ctx.fillStyle = gold ? GOLD_DEEP : LEAF_DEEP;
+      ctx.beginPath();
+      ctx.ellipse(cx + r * 0.35, cy - r * 0.85, r * 0.32, r * 0.16, -0.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    // Full apple: scale the unit-coord Path2D into the cell. A small
+    // negative inset keeps the silhouette off the grid lines.
+    const inset = cs * 0.02;
+    const size = (cs - inset * 2) * scale;
+    const cx = x + cs / 2;
+    const cy = y + cs / 2;
     ctx.save();
     ctx.globalAlpha = alpha;
-    if (this.mini) {
-      ctx.fillStyle = gold ? GOLD : APPLE_RED;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
-      if (gold) {
-        ctx.strokeStyle = GOLD_DARK;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
+    // Translate so the unit shape (centred at 0.5,0.56) sits in the cell.
+    ctx.translate(cx, cy);
+    ctx.scale(size, size);
+    ctx.translate(-0.5, -0.56);
+
+    // Soft contact shadow under the apple.
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.18;
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.ellipse(0.5, 0.93, 0.30, 0.06, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // --- Leaf (behind body shoulder) ---
+    const leafGrad = ctx.createLinearGradient(0.5, 0.05, 0.8, 0.22);
+    leafGrad.addColorStop(0, LEAF_LIGHT);
+    leafGrad.addColorStop(1, LEAF_DEEP);
+    ctx.fillStyle = leafGrad;
+    ctx.fill(this._applyLeafPath);
+
+    // --- Stem ---
+    ctx.strokeStyle = STEM_COLOR;
+    ctx.lineWidth = 0.045;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(0.5, 0.20);
+    ctx.lineTo(0.485, 0.07);
+    ctx.stroke();
+
+    // --- Body ---
+    // Diagonal gradient: lit upper-left → deep lower-right.
+    const grad = ctx.createLinearGradient(0.2, 0.22, 0.85, 0.92);
+    if (gold) {
+      grad.addColorStop(0, GOLD_LIGHT);
+      grad.addColorStop(0.55, GOLD_BASE);
+      grad.addColorStop(1, GOLD_DEEP);
     } else {
-      const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.2, cx, cy, r);
-      if (gold) {
-        grad.addColorStop(0, "#fff7c2");
-        grad.addColorStop(0.55, GOLD);
-        grad.addColorStop(1, GOLD_DARK);
-      } else {
-        grad.addColorStop(0, APPLE_RED);
-        grad.addColorStop(1, APPLE_DARK);
-      }
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
-      if (gold) {
-        ctx.save();
-        ctx.globalAlpha = alpha * 0.6;
-        ctx.strokeStyle = GOLD_DARK;
-        ctx.lineWidth = Math.max(2, cs * 0.08);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.strokeStyle = gold ? "#8b6900" : "#5d4037";
-      ctx.lineWidth = Math.max(1.5, cs * 0.06);
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - r);
-      ctx.lineTo(cx + r * 0.15, cy - r - r * 0.18);
-      ctx.stroke();
-      if (!hideNumber) {
-        ctx.fillStyle = gold ? "#3a2a00" : TEXT_COLOR;
-        ctx.font = `bold ${Math.floor(cs * 0.5)}px sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(String(value), cx, cy + 1);
-      } else {
-        // Blind: faint placeholder so the apple still looks "occupied"
-        ctx.fillStyle = "rgba(255,255,255,0.7)";
-        ctx.font = `bold ${Math.floor(cs * 0.5)}px sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("?", cx, cy + 1);
-      }
+      grad.addColorStop(0, APPLE_LIGHT);
+      grad.addColorStop(0.55, APPLE_BASE);
+      grad.addColorStop(1, APPLE_DEEP);
     }
+    ctx.fillStyle = grad;
+    ctx.fill(this._applyBodyPath);
+
+    // Thin outline crisps the silhouette against light backgrounds.
+    ctx.strokeStyle = gold ? GOLD_OUTLINE : APPLE_OUTLINE;
+    ctx.lineWidth = 0.02;
+    ctx.stroke(this._applyBodyPath);
+
+    // --- Specular highlight (upper-left) ---
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.5;
+    const hl = ctx.createRadialGradient(0.34, 0.38, 0.01, 0.34, 0.38, 0.16);
+    hl.addColorStop(0, "rgba(255,255,255,0.95)");
+    hl.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = hl;
+    ctx.beginPath();
+    ctx.ellipse(0.34, 0.40, 0.13, 0.18, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.restore();
+
+    // --- Number (drawn in cell pixel space, not the scaled unit space) ---
+    const label = hideNumber ? "?" : String(value);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = hideNumber ? "rgba(255,255,255,0.85)" : TEXT_COLOR;
+    ctx.font = `700 ${Math.floor(cs * 0.46)}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(60,15,10,0.35)";
+    ctx.shadowBlur = cs * 0.04;
+    ctx.shadowOffsetY = cs * 0.02;
+    ctx.fillText(label, cx, cy + cs * 0.04);
     ctx.restore();
   }
 
@@ -460,4 +521,38 @@ export class BoardRenderer {
     };
     this._raf = requestAnimationFrame(tick);
   }
+}
+
+// Apple body silhouette in unit coordinates (0..1). A side-profile apple:
+// two rounded lobes with a dimple at the top centre and a softly tapered
+// base. Built once and reused (scaled) for every cell.
+function _buildAppleBodyPath() {
+  const p = new Path2D();
+  // Start at the top dimple.
+  p.moveTo(0.5, 0.24);
+  // Left shoulder
+  p.bezierCurveTo(0.41, 0.17, 0.28, 0.16, 0.20, 0.26);
+  // Left side down to the base
+  p.bezierCurveTo(0.07, 0.41, 0.07, 0.66, 0.19, 0.83);
+  // Bottom-left lobe meeting the centre dimple of the base
+  p.bezierCurveTo(0.30, 0.96, 0.43, 0.95, 0.50, 0.88);
+  // Bottom-right lobe
+  p.bezierCurveTo(0.57, 0.95, 0.70, 0.96, 0.81, 0.83);
+  // Right side up
+  p.bezierCurveTo(0.93, 0.66, 0.93, 0.41, 0.80, 0.26);
+  // Right shoulder back to the dimple
+  p.bezierCurveTo(0.72, 0.16, 0.59, 0.17, 0.50, 0.24);
+  p.closePath();
+  return p;
+}
+
+// A small leaf angled up-right from the stem base.
+function _buildLeafPath() {
+  const p = new Path2D();
+  p.moveTo(0.50, 0.17);
+  p.quadraticCurveTo(0.66, 0.04, 0.80, 0.11);
+  p.quadraticCurveTo(0.74, 0.24, 0.55, 0.22);
+  p.quadraticCurveTo(0.50, 0.20, 0.50, 0.17);
+  p.closePath();
+  return p;
 }

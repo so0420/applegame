@@ -2,6 +2,7 @@ import { GameSocket } from "./ws.js";
 import { BoardRenderer } from "./board.js";
 import { attachDragInput } from "./input.js";
 import { audio } from "./audio.js";
+import { icon, setIcon } from "./icons.js";
 
 const $ = (id) => document.getElementById(id);
 const GAME_DURATION_MS = 120 * 1000;
@@ -14,6 +15,16 @@ const screens = {
   lobby: $("lobby"),
   game: $("game"),
 };
+
+// Fill every [data-icon="name"] element with its inline SVG. Declarative
+// so static chrome (home/menu/mode glyphs) stays in the markup while the
+// SVG source lives in icons.js.
+function hydrateStaticIcons(root = document) {
+  for (const el of root.querySelectorAll("[data-icon]")) {
+    setIcon(el, el.dataset.icon);
+  }
+}
+hydrateStaticIcons();
 
 function show(name) {
   for (const key of Object.keys(screens)) {
@@ -66,11 +77,17 @@ const state = {
 };
 
 const ITEM_META = {
-  hint:    { icon: "🔍", label: "힌트",  attack: false, desc: "내 보드에 합10 쌍 강조 (3초)" },
-  blind:   { icon: "🙈", label: "숫자 숨김", attack: true, desc: "상대 1명 숫자 3초 가림" },
-  shuffle: { icon: "🔀", label: "셔플", attack: false, desc: "내 보드 남은 사과 무작위 재배치" },
-  shield:  { icon: "🛡", label: "방어",  attack: false, desc: "8초간 받는 공격 무효 + 적용된 방해 즉시 해제" },
+  hint:    { label: "힌트",  attack: false, desc: "내 보드에 합10 쌍 강조 (3초)" },
+  blind:   { label: "숫자 숨김", attack: true, desc: "상대 1명 숫자 3초 가림" },
+  shuffle: { label: "셔플", attack: false, desc: "내 보드 남은 사과 무작위 재배치" },
+  shield:  { label: "방어",  attack: false, desc: "8초간 받는 공격 무효 + 적용된 방해 즉시 해제" },
 };
+
+// Build "icon + text" markup for a toast/tooltip. `name` keys into icons.js
+// (item kind or a chrome glyph); falls back to text-only when unknown.
+function labelWithIcon(name, text) {
+  return `${icon(name)}<span>${text}</span>`;
+}
 
 const sumBadge = $("sumBadge");
 const canvas = $("board");
@@ -259,7 +276,7 @@ function refreshAudioToggleUi() {
   const btn = $("audioToggle");
   if (!btn) return;
   btn.classList.toggle("muted", audio.muted);
-  btn.textContent = audio.muted ? "🔇" : "🔊";
+  setIcon(btn, audio.muted ? "audioOff" : "audioOn");
 }
 refreshAudioToggleUi();
 const _unlockOnce = () => {
@@ -325,14 +342,15 @@ document.querySelectorAll(".inv-slot").forEach((btn) => {
     if (!Number.isInteger(slot)) return;
     if (!state.inventory[slot]) return;
     if (state.replayActive || isRoundOver()) return;
-    // ✕ corner click → discard instead of use.
-    if (ev.target.classList?.contains("inv-x")) {
+    // ✕ corner click → discard instead of use. Use closest() because the
+    // click can land on the SVG (or a path inside it) nested in .inv-x.
+    if (ev.target.closest?.(".inv-x")) {
       ev.stopPropagation();
       discardSlot(slot);
       return;
     }
     if (btn.classList.contains("locked")) {
-      showItemToast("⏳ 마지막 10초엔 공격 아이템을 쓸 수 없어요");
+      showItemToast("<span>⏳ 마지막 10초엔 공격 아이템을 쓸 수 없어요</span>");
       return;
     }
     hideInvTooltip();  // slot will be consumed; clear lingering tooltip
@@ -384,7 +402,7 @@ function showInvTooltipFor(btn) {
   const item = state.inventory[slot];
   const meta = item ? ITEM_META[item] : null;
   if (!meta) return;
-  invTooltipName.textContent = `${meta.icon} ${meta.label}`;
+  invTooltipName.innerHTML = `${icon(item)}<span>${meta.label}</span>`;
   invTooltipDesc.textContent = meta.desc;
   invTooltip.hidden = false;
   // Position above the slot. -8px lifts it off the slot a hair so the
@@ -721,7 +739,7 @@ function bindSocket(ws) {
     state.inventory[slot] = item;
     renderInventory();
     const meta = ITEM_META[item];
-    if (meta) showItemToast(`${meta.icon} ${meta.label} 획득!`);
+    if (meta) showItemToast(labelWithIcon(item, `${meta.label} 획득!`));
   });
 
   ws.addEventListener("msg:item_discarded", (e) => {
@@ -729,7 +747,7 @@ function bindSocket(ws) {
     if (typeof slot === "number") {
       state.inventory[slot] = null;
       renderInventory();
-      showItemToast("🗑 아이템 버림");
+      showItemToast(labelWithIcon("discard", "아이템 버림"));
     }
   });
 
@@ -1051,8 +1069,8 @@ function renderInventory() {
       // Icon + ✕ button (corner discard). Re-render rather than mutate so
       // we don't need to track per-slot child nodes across re-renders.
       btn.innerHTML =
-        `<span class="inv-icon">${ITEM_META[item].icon}</span>` +
-        `<span class="inv-x" role="button" aria-label="버리기" title="버리기 (우클릭/롱프레스)">✕</span>`;
+        `<span class="inv-icon">${icon(item)}</span>` +
+        `<span class="inv-x" role="button" aria-label="버리기" title="버리기 (우클릭/롱프레스)">${icon("discard")}</span>`;
       const isAttack = ITEM_META[item].attack;
       btn.classList.toggle("locked", isAttack && locked);
     } else {
@@ -1066,10 +1084,12 @@ function renderInventory() {
   if (typeof hideInvTooltip === "function") hideInvTooltip();
 }
 
+// Toasts accept HTML markup (icon + text). Callers must escape any
+// user-supplied text (nicknames) via escapeHtml.
 let _itemToastTimer = null;
-function showItemToast(msg) {
+function showItemToast(html) {
   const el = $("itemToast");
-  el.textContent = msg;
+  el.innerHTML = html;
   el.hidden = false;
   // Reflow so the opacity transition restarts when called rapidly
   void el.offsetWidth;
@@ -1082,9 +1102,9 @@ function showItemToast(msg) {
 }
 
 let _attackToastTimer = null;
-function showAttackToast(msg) {
+function showAttackToast(html) {
   const el = $("attackToast");
-  el.textContent = msg;
+  el.innerHTML = html;
   el.hidden = false;
   void el.offsetWidth;
   el.classList.add("show");
@@ -1100,8 +1120,14 @@ function showBoardEffect(kind, durationMs) {
   if (!el) {
     el = document.createElement("div");
     el.className = `board-effect-overlay ${kind}`;
-    const labels = { shield: "🛡 SHIELD", blind: "🙈 숫자 숨김", shuffle: "🔀 SHUFFLE" };
-    el.textContent = labels[kind] || "";
+    const labels = { shield: "SHIELD", blind: "숫자 숨김", shuffle: "SHUFFLE" };
+    if (kind === "shield") {
+      // Shield draws as an inset ring; show a corner crest instead of a
+      // centred label so the board stays readable.
+      el.innerHTML = `<span class="effect-corner">${icon("shield")}</span>`;
+    } else {
+      el.innerHTML = `${icon(kind)}<span>${labels[kind] || ""}</span>`;
+    }
     // Attach to .board-wrap so the overlay hugs the canvas exactly,
     // matching the replay border. board-area would extend past the
     // canvas on mobile and look too far from the apples.
@@ -1124,20 +1150,21 @@ function showItemUsedToast(by, item, target_id, blocked = false) {
   const meta = ITEM_META[item];
   if (!meta) return;
   const byPlayer = state.room?.players.find((p) => p.id === by);
-  const byName = byPlayer?.nickname ?? "?";
-  const blockSuffix = blocked ? " — 🛡 방어됨" : "";
+  const byName = escapeHtml(byPlayer?.nickname ?? "?");
+  const shieldTag = `${icon("shield")}`;
+  const blockSuffix = blocked ? ` ${shieldTag}<span>방어됨</span>` : "";
   if (by === state.playerId) {
-    showItemToast(`${meta.icon} ${meta.label} 사용${blockSuffix}`);
+    showItemToast(labelWithIcon(item, `${meta.label} 사용`) + blockSuffix);
   } else if (target_id === state.playerId && meta.attack) {
     if (blocked) {
-      showItemToast(`🛡 ${byName}님의 ${meta.icon} ${meta.label} 방어!`);
+      showItemToast(`${shieldTag}<span>${byName}님의 ${meta.label} 방어!</span>`);
     } else {
-      showAttackToast(`${byName}님이 ${meta.icon} ${meta.label}!`);
+      showAttackToast(labelWithIcon(item, `${byName}님이 ${meta.label}!`));
     }
   } else if (meta.attack && target_id) {
     const target = state.room?.players.find((p) => p.id === target_id);
-    const tName = target?.nickname ?? "?";
-    showItemToast(`${byName} → ${tName} (${meta.icon} ${meta.label})${blockSuffix}`);
+    const tName = escapeHtml(target?.nickname ?? "?");
+    showItemToast(labelWithIcon(item, `${byName} → ${tName} (${meta.label})`) + blockSuffix);
   }
 }
 
@@ -1219,7 +1246,7 @@ function setCombo(n, triggered = false) {
   state.combo = n;
   const badge = $("comboBadge");
   const mob = $("mobileCombo");
-  const icon = badge.querySelector(".combo-icon");
+  const iconEl = badge.querySelector(".combo-icon");
   const text = badge.querySelector(".combo-text");
   const badgeTrigger = badge.querySelector(".combo-trigger-msg");
   const mobDefault = mob.querySelector(".mobile-combo-default");
@@ -1228,7 +1255,7 @@ function setCombo(n, triggered = false) {
 
   if (triggered) {
     // In-place swap: hide the normal icon+text, show the trigger pill.
-    icon.hidden = true;
+    iconEl.hidden = true;
     text.hidden = true;
     badgeTrigger.hidden = false;
     mobDefault.hidden = true;
@@ -1242,7 +1269,7 @@ function setCombo(n, triggered = false) {
     state._comboMessageTimer = setTimeout(() => {
       badge.classList.remove("triggered");
       badgeTrigger.hidden = true;
-      icon.hidden = false;
+      iconEl.hidden = false;
       text.hidden = false;
       mobTrigger.hidden = true;
       mobDefault.hidden = false;
@@ -1258,7 +1285,7 @@ function setCombo(n, triggered = false) {
   // badge briefly flashes a fresh "콤보 1" instead of staying blank.
   badge.classList.remove("triggered");
   badgeTrigger.hidden = true;
-  icon.hidden = false;
+  iconEl.hidden = false;
   text.hidden = false;
   mobTrigger.hidden = true;
   mobDefault.hidden = false;
@@ -1499,11 +1526,17 @@ function renderLobby() {
       b.classList.toggle("active", b.dataset.variant === state.variant);
       b.disabled = !isHost;
     });
-    $("variantHelper").textContent = isHost
-      ? (state.variant === "items"
-          ? "황금 사과를 합10에 포함시키면 랜덤 아이템 (🔍힌트 🙈숨김 🔀셔플 🛡방어) 획득"
-          : "원하면 아이템전으로 바꿔보세요")
-      : `호스트가 모드를 정합니다 (현재 ${state.variant === "items" ? "아이템전" : "클래식"})`;
+    if (isHost && state.variant === "items") {
+      const chips = ["hint", "blind", "shuffle", "shield"]
+        .map((k) => `<span class="ico">${icon(k)}</span>`)
+        .join(" ");
+      $("variantHelper").innerHTML =
+        `황금 사과를 합10에 포함시키면 랜덤 아이템 (${chips}) 획득`;
+    } else {
+      $("variantHelper").textContent = isHost
+        ? "원하면 아이템전으로 바꿔보세요"
+        : `호스트가 모드를 정합니다 (현재 ${state.variant === "items" ? "아이템전" : "클래식"})`;
+    }
   }
 
   // Nickname editing in the player list is gated on state.mode in
@@ -1965,7 +1998,7 @@ function updateReplaySpeedButtons() {
 }
 
 function updateReplayPlayPause() {
-  $("replayPlayPause").textContent = state.replayPaused ? "▶" : "❚❚";
+  setIcon($("replayPlayPause"), state.replayPaused ? "play" : "pause");
 }
 
 function formatMmSs(ms) {
