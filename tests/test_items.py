@@ -306,7 +306,7 @@ def test_clearing_golden_grants_item_and_shrinks_set():
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
         _drain_until(host, "clear")
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "blind", "shuffle", "shield")
+        assert acq["item"] in ("hint", "shuffle", "blind", "overload", "freeze", "shield")
         # The (0,0) golden has been consumed
         assert (0, 0) not in room.golden[host_id]
         # And actually stored in inventory
@@ -331,7 +331,7 @@ def test_big_clear_grants_item_instantly():
         clear = _drain_until(host, "clear")
         assert len(clear["cells"]) == 5
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "blind", "shuffle", "shield")
+        assert acq["item"] in ("hint", "shuffle", "blind", "overload", "freeze", "shield")
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)
@@ -357,7 +357,7 @@ def test_combo_threshold_clears_grant_item():
         assert clear["combo"] == 0       # reset right after the drop
         assert clear["combo_triggered"] is True
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "blind", "shuffle", "shield")
+        assert acq["item"] in ("hint", "shuffle", "blind", "overload", "freeze", "shield")
         assert room.players[host_id].combo_count == 0
     finally:
         h_ctx.__exit__(None, None, None)
@@ -447,7 +447,7 @@ def test_simultaneous_triggers_grant_only_one_item():
         assert clear["combo"] == 0
         # Exactly one item_acquired should follow, then no more.
         acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "blind", "shuffle", "shield")
+        assert acq["item"] in ("hint", "shuffle", "blind", "overload", "freeze", "shield")
         # Confirm no second item_acquired comes through.
         host.send_json({"type": "rename", "nickname": "ok"})
         nxt = host.receive_json()
@@ -662,6 +662,105 @@ def test_shield_cleanses_active_blind():
         g_ctx.__exit__(None, None, None)
 
 
+def test_overload_attack_sets_deadline_on_opponent():
+    """Overload targets an opponent and sets overload_until in the future
+    without touching their real board values."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        board_before = [row[:] for row in room.boards[guest_id]]
+        host_player = room.players[host_id]
+        host_player.inventory[0] = "overload"
+        t0 = time.time()
+        host.send_json({"type": "use_item", "slot": 0})
+        saw_effect = False
+        for _ in range(4):
+            m = host.receive_json()
+            if m["type"] == "effect_start" and m.get("effect") == "overload":
+                saw_effect = True
+                assert m["target_id"] == guest_id
+                break
+        assert saw_effect
+        assert room.players[guest_id].overload_until > t0
+        # Real values are untouched — deception is client-side only.
+        assert room.boards[guest_id] == board_before
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_freeze_attack_sets_deadline_on_opponent():
+    """Freeze targets an opponent and sets freeze_until in the future."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        host_player = room.players[host_id]
+        host_player.inventory[0] = "freeze"
+        t0 = time.time()
+        host.send_json({"type": "use_item", "slot": 0})
+        saw_effect = False
+        for _ in range(4):
+            m = host.receive_json()
+            if m["type"] == "effect_start" and m.get("effect") == "freeze":
+                saw_effect = True
+                assert m["target_id"] == guest_id
+                break
+        assert saw_effect
+        assert room.players[guest_id].freeze_until > t0
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_shield_blocks_overload_and_freeze():
+    """A shielded target blocks incoming overload/freeze (slot burns, no
+    effect applied)."""
+    for attack, attr in (("overload", "overload_until"), ("freeze", "freeze_until")):
+        h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+        try:
+            room.players[guest_id].shield_until = time.time() + 5.0
+            host_player = room.players[host_id]
+            host_player.inventory[0] = attack
+            host.send_json({"type": "use_item", "slot": 0})
+            seen_blocked = False
+            for _ in range(3):
+                m = host.receive_json()
+                if m["type"] == "item_used" and m["item"] == attack:
+                    seen_blocked = m.get("blocked") is True
+                    break
+            assert seen_blocked, attack
+            assert getattr(room.players[guest_id], attr) == 0.0
+            assert host_player.inventory[0] is None
+        finally:
+            h_ctx.__exit__(None, None, None)
+            g_ctx.__exit__(None, None, None)
+
+
+def test_shield_cleanses_overload_and_freeze():
+    """Shield cleanses every active attack effect on the user at once."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        host_player = room.players[host_id]
+        now = time.time()
+        host_player.blind_until = now + 30.0
+        host_player.overload_until = now + 30.0
+        host_player.freeze_until = now + 30.0
+        host_player.inventory[0] = "shield"
+        host.send_json({"type": "use_item", "slot": 0})
+        ended = set()
+        for _ in range(10):
+            m = host.receive_json()
+            if m["type"] == "effect_end":
+                ended.add(m.get("effect"))
+            if {"blind", "overload", "freeze"} <= ended:
+                break
+        assert {"blind", "overload", "freeze"} <= ended
+        assert host_player.blind_until == 0.0
+        assert host_player.overload_until == 0.0
+        assert host_player.freeze_until == 0.0
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
 def test_discard_item_clears_slot():
     """discard_item empties the slot and echoes item_discarded back."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
@@ -694,16 +793,26 @@ def test_weighted_drop_respects_tier_distribution():
     """Top tier should overwhelmingly favor shield; bottom should favor hint.
     Sample enough that random variance can't flip the dominant kind."""
     import random as _r
+    from collections import Counter
     from app.ws.handlers import _weighted_drop
+    from app.game.room import ITEM_KINDS
 
     _r.seed(7)
-    top_counts = {"hint": 0, "blind": 0, "shuffle": 0, "shield": 0}
-    bot_counts = {"hint": 0, "blind": 0, "shuffle": 0, "shield": 0}
-    for _ in range(2000):
+    top_counts = Counter()
+    bot_counts = Counter()
+    mid_counts = Counter()
+    for _ in range(4000):
         top_counts[_weighted_drop("top")] += 1
         bot_counts[_weighted_drop("bottom")] += 1
-    assert top_counts["shield"] == max(top_counts.values())
-    assert bot_counts["hint"] == max(bot_counts.values())
+        mid_counts[_weighted_drop("middle")] += 1
+    # Only valid item kinds are ever produced.
+    assert set(top_counts) <= set(ITEM_KINDS)
+    # Tier-dominant kinds match the design intent.
+    assert top_counts.most_common(1)[0][0] == "shield"
+    assert bot_counts.most_common(1)[0][0] == "hint"
+    # Mid tier is attack-leaning: blind/overload should beat shield.
+    assert mid_counts["blind"] > mid_counts["shield"]
+    assert mid_counts["overload"] > mid_counts["shield"]
 
 
 def test_player_tier_buckets_by_score():

@@ -24,7 +24,9 @@ from ..game.room import (
     COMBO_THRESHOLD,
     COMBO_WINDOW_S,
     EFFECT_BLIND,
+    EFFECT_FREEZE,
     EFFECT_HINT,
+    EFFECT_OVERLOAD,
     EFFECT_SHIELD,
     GAME_DURATION,
     INVENTORY_SIZE,
@@ -43,7 +45,7 @@ log = logging.getLogger(__name__)
 
 DISCONNECT_GRACE = 300.0  # seconds — keep room alive when all players disconnected
 
-ATTACK_ITEMS = {"blind"}
+ATTACK_ITEMS = {"blind", "overload", "freeze"}
 
 
 def _t_ms(room: Room) -> int:
@@ -533,25 +535,33 @@ async def _handle_use_item(
             return
         target_id: str | None = None
         blocked = False
-        cleared_blind = False
+        cleansed: list[str] = []
+        # Attack items targeting an opponent: pick a target, then let the
+        # target's shield block the strike (the attacker's slot still
+        # burns). All three share this shape, only the deadline attr differs.
+        ATTACK_DEADLINE = {
+            "blind": ("blind_until", EFFECT_BLIND),
+            "overload": ("overload_until", EFFECT_OVERLOAD),
+            "freeze": ("freeze_until", EFFECT_FREEZE),
+        }
         if item == "hint":
             pair = find_sum10_pair(room.boards.get(player.id, []))
             payload["hint"] = [{"r": r, "c": c} for (r, c) in (pair or [])]
             target_id = player.id
             until = now + EFFECT_HINT
-        elif item == "blind":
+        elif item in ATTACK_DEADLINE:
             target_id = _pick_attack_target(room, player.id)
             if target_id is None:
                 return
             target = room.players[target_id]
-            # Shield on the target blocks the incoming attack — the
-            # attacker's slot still burns, but no blind effect applies.
+            attr, dur = ATTACK_DEADLINE[item]
             if target.shield_until > now:
                 blocked = True
                 until = now
             else:
-                target.blind_until = now + EFFECT_BLIND
-                until = target.blind_until
+                deadline = now + dur
+                setattr(target, attr, deadline)
+                until = deadline
         elif item == "shuffle":
             # Self-shuffle — re-rolls the player's own remaining apples.
             target_id = player.id
@@ -564,10 +574,15 @@ async def _handle_use_item(
             target_id = player.id
             player.shield_until = now + EFFECT_SHIELD
             until = player.shield_until
-            # Shield also cleanses an active blind on the user.
-            if player.blind_until > now:
-                player.blind_until = 0.0
-                cleared_blind = True
+            # Shield also cleanses any active attack effect on the user.
+            for eff, attr in (
+                ("blind", "blind_until"),
+                ("overload", "overload_until"),
+                ("freeze", "freeze_until"),
+            ):
+                if getattr(player, attr) > now:
+                    setattr(player, attr, 0.0)
+                    cleansed.append(eff)
         else:
             return
         # Consume the slot
@@ -582,13 +597,13 @@ async def _handle_use_item(
             "target_id": target_id,
             "blocked": blocked,
         })
-        if cleared_blind:
-            # Record the cleansed blind so replay shows it ending here.
+        for eff in cleansed:
+            # Record each cleansed effect so replay shows it ending here.
             room.events.append({
                 "kind": "effect_end",
                 "t_ms": t_ms,
                 "target_id": player.id,
-                "effect": "blind",
+                "effect": eff,
             })
 
     used_msg = S.msg(
@@ -602,10 +617,10 @@ async def _handle_use_item(
     )
     await broadcast(room, used_msg)
 
-    if cleared_blind:
+    for eff in cleansed:
         await broadcast(
             room,
-            S.msg(S.EFFECT_END, target_id=player.id, effect="blind", t_ms=t_ms),
+            S.msg(S.EFFECT_END, target_id=player.id, effect=eff, t_ms=t_ms),
         )
 
     if blocked:

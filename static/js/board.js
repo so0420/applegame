@@ -53,6 +53,7 @@ export class BoardRenderer {
     // Item-mode state
     this.goldenCells = new Set();   // "r,c" keys
     this.blind = false;             // hide numeric values
+    this.overload = false;          // show deceptive (value+1) numbers
     this.hintCells = null;          // [[r,c], ...]
     this._shakeUntil = 0;
     // Pre-built Path2D for the apple silhouette / leaf in unit coords (0..1).
@@ -118,6 +119,20 @@ export class BoardRenderer {
     if (this.blind === on) return;
     this.blind = on;
     this.render();
+  }
+
+  setOverload(on) {
+    if (this.overload === on) return;
+    this.overload = on;
+    this.render();
+  }
+
+  // Deceptive value shown under the "overload" attack: 1..9 shifted up by
+  // one (9 wraps to 1) so the displayed number is always wrong but still a
+  // single digit. Real board values are untouched — server validation and
+  // the optimistic clear both use the true values.
+  _displayValue(v) {
+    return (v % 9) + 1;
   }
 
   setHint(cells) {
@@ -281,7 +296,11 @@ export class BoardRenderer {
     let total = 0;
     for (let r = rect.r1; r <= rect.r2; r++) {
       for (let c = rect.c1; c <= rect.c2; c++) {
-        total += this.board[r][c] || 0;
+        const v = this.board[r][c] || 0;
+        if (!v) continue;
+        // While overloaded the running-sum badge must reflect the deceptive
+        // numbers the player sees, otherwise the trap is obvious.
+        total += this.overload ? this._displayValue(v) : v;
       }
     }
     return total;
@@ -468,7 +487,8 @@ export class BoardRenderer {
     ctx.restore();
 
     // --- Number (drawn in cell pixel space, not the scaled unit space) ---
-    const label = hideNumber ? "?" : String(value);
+    const shown = this.overload ? this._displayValue(value) : value;
+    const label = hideNumber ? "?" : String(shown);
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.fillStyle = hideNumber ? "rgba(255,255,255,0.85)" : TEXT_COLOR;

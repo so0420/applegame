@@ -70,17 +70,32 @@ const state = {
   matchTickerId: null,
   // Item-mode local state
   inventory: [null, null, null],
-  effects: { shield: 0, blind: 0, hint: 0 },  // expiry ms
+  effects: { shield: 0, blind: 0, hint: 0, overload: 0, freeze: 0 },  // expiry ms
   effectTimers: {},
   initialGolden: [],   // [[r,c], ...] picked at game start
   combo: 0,
 };
 
+// `role` groups items for the help screen: self (자기 강화) / attack (공격)
+// / defense (방어). Display order below is the order shown in help.
 const ITEM_META = {
-  hint:    { label: "힌트",  attack: false, desc: "내 보드에 합10 쌍 강조 (3초)" },
-  blind:   { label: "숫자 숨김", attack: true, desc: "상대 1명 숫자 3초 가림" },
-  shuffle: { label: "셔플", attack: false, desc: "내 보드 남은 사과 무작위 재배치" },
-  shield:  { label: "방어",  attack: false, desc: "8초간 받는 공격 무효 + 적용된 방해 즉시 해제" },
+  hint:     { label: "힌트",  attack: false, role: "self",    desc: "내 보드에 합10 쌍 강조 (3초)" },
+  shuffle:  { label: "셔플",  attack: false, role: "self",    desc: "내 보드 남은 사과 무작위 재배치" },
+  blind:    { label: "숫자 숨김", attack: true,  role: "attack",  desc: "상대 1명의 숫자를 3초간 가림" },
+  overload: { label: "과부하", attack: true,  role: "attack",  desc: "상대 1명의 숫자가 3초간 +1로 잘못 보임 (실제 값은 그대로)" },
+  freeze:   { label: "결빙",  attack: true,  role: "attack",  desc: "상대 1명의 조작을 2초간 잠금" },
+  shield:   { label: "방어",  attack: false, role: "defense", desc: "8초간 받는 공격 무효 + 적용된 방해 즉시 해제" },
+};
+// Order items appear in the help list.
+const ITEM_ORDER = ["hint", "shuffle", "blind", "overload", "freeze", "shield"];
+
+// Rank-tier drop weights — MIRROR of ITEM_DROP_WEIGHTS in app/game/room.py.
+// Used only to render the help screen's drop-rate table; the server is the
+// source of truth for actual drops. Keep the two in sync.
+const ITEM_DROP_WEIGHTS = {
+  top:    { hint: 2, shuffle: 4, blind: 2, overload: 2, freeze: 1, shield: 9 },
+  middle: { hint: 2, shuffle: 3, blind: 5, overload: 5, freeze: 3, shield: 2 },
+  bottom: { hint: 6, shuffle: 5, blind: 3, overload: 2, freeze: 2, shield: 2 },
 };
 
 // Build "icon + text" markup for a toast/tooltip. `name` keys into icons.js
@@ -104,10 +119,15 @@ function isRoundOver() {
   return !!(state.endsAt && Date.now() >= state.endsAt);
 }
 
+function isFrozen() {
+  // The "freeze" attack locks drag/submit for its duration.
+  return state.effects.freeze > Date.now();
+}
+
 attachDragInput(canvas, state.bigRenderer, {
   onUpdate: (rect) => {
     if (state.replayActive) return;
-    if (isRoundOver()) {
+    if (isRoundOver() || isFrozen()) {
       sumBadge.hidden = true;
       return;
     }
@@ -139,7 +159,7 @@ attachDragInput(canvas, state.bigRenderer, {
   onSubmit: (rect) => {
     sumBadge.hidden = true;
     if (state.replayActive) return;
-    if (isRoundOver()) return;
+    if (isRoundOver() || isFrozen()) return;
     if (state.focusedPlayerId !== state.playerId) return;
     if (state.startedAt && Date.now() < state.startedAt) return;
 
@@ -268,8 +288,39 @@ document.querySelectorAll("[data-match-variant]").forEach((btn) => {
 $("matchVariantBackBtn")?.addEventListener("click", () => show("home"));
 
 // ---- Help screen ----
-$("helpOpenBtn")?.addEventListener("click", () => show("helpScreen"));
+$("helpOpenBtn")?.addEventListener("click", () => { renderHelpItems(); show("helpScreen"); });
 $("helpBackBtn")?.addEventListener("click", () => show("home"));
+
+// Render the help-screen item table (icon · name · role · desc · per-tier
+// drop %). Percentages are derived from the ITEM_DROP_WEIGHTS mirror.
+const ROLE_LABEL = { self: "자기 강화", attack: "공격", defense: "방어" };
+function renderHelpItems() {
+  const list = $("helpItemList");
+  if (!list) return;
+  const pct = (tier, k) => {
+    const w = ITEM_DROP_WEIGHTS[tier];
+    const total = Object.values(w).reduce((a, b) => a + b, 0);
+    return Math.round((w[k] / total) * 100);
+  };
+  list.innerHTML = ITEM_ORDER.map((k) => {
+    const m = ITEM_META[k];
+    const iconCls = m.attack ? "help-icon attack" : "help-icon";
+    return `
+      <li>
+        <span class="${iconCls}">${icon(k)}</span>
+        <span class="help-body">
+          <span class="help-title"><strong>${m.label}</strong>
+            <span class="role-tag ${m.role}">${ROLE_LABEL[m.role]}</span></span>
+          <span class="help-desc">${m.desc}</span>
+          <span class="help-prob">
+            <span>하위 <b>${pct("bottom", k)}%</b></span>
+            <span>중위 <b>${pct("middle", k)}%</b></span>
+            <span>상위 <b>${pct("top", k)}%</b></span>
+          </span>
+        </span>
+      </li>`;
+  }).join("");
+}
 
 // ---- Audio: unlock on first user gesture, wire mute toggle ----
 function refreshAudioToggleUi() {
@@ -629,7 +680,7 @@ function resetState() {
   state.matchDeadlineMs = null;
   state.variant = "classic";
   state.inventory = [null, null, null];
-  state.effects = { shield: 0, blind: 0, hint: 0 };
+  state.effects = { shield: 0, blind: 0, hint: 0, overload: 0, freeze: 0 };
   state.initialGolden = [];
   $("inventory").hidden = true;
   $("mobileInventory").hidden = true;
@@ -1120,7 +1171,7 @@ function showBoardEffect(kind, durationMs) {
   if (!el) {
     el = document.createElement("div");
     el.className = `board-effect-overlay ${kind}`;
-    const labels = { shield: "SHIELD", blind: "숫자 숨김", shuffle: "SHUFFLE" };
+    const labels = { shield: "SHIELD", blind: "숫자 숨김", shuffle: "SHUFFLE", overload: "과부하", freeze: "결빙" };
     if (kind === "shield") {
       // Shield draws as an inset ring; show a corner crest instead of a
       // centred label so the board stays readable.
@@ -1181,6 +1232,19 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
       // Hide any sum badge from an in-progress drag started before blind hit.
       sumBadge.hidden = true;
       showBoardEffect("blind", remainingMs);
+    } else if (effect === "overload") {
+      state.effects.overload = until_ms;
+      state.bigRenderer.setOverload(true);
+      state.miniRenderers.get(state.playerId)?.setOverload(true);
+      sumBadge.hidden = true;
+      showBoardEffect("overload", remainingMs);
+    } else if (effect === "freeze") {
+      state.effects.freeze = until_ms;
+      // Kill any in-progress drag so the lock feels immediate.
+      sumBadge.hidden = true;
+      state.bigRenderer.setMyDrag(null);
+      state.miniRenderers.get(state.playerId)?.setMyDrag(null);
+      showBoardEffect("freeze", remainingMs);
     } else if (effect === "hint" && Array.isArray(hint)) {
       const cells = hint.map((h) => [h.r, h.c]);
       state.bigRenderer.setHint(cells);
@@ -1190,6 +1254,8 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
     const mini = state.miniRenderers.get(target_id);
     mini?.setBlind(true);
     if (target_id === state.focusedPlayerId) state.bigRenderer.setBlind(true);
+  } else if (effect === "overload") {
+    if (target_id === state.focusedPlayerId) state.bigRenderer.setOverload(true);
   }
 }
 
@@ -1205,6 +1271,18 @@ function applyEffectEnd(target_id, effect) {
       state.bigRenderer.setBlind(false);
     }
     if (target_id === state.playerId) hideBoardEffect("blind");
+  } else if (effect === "overload") {
+    if (target_id === state.playerId) state.effects.overload = 0;
+    state.miniRenderers.get(target_id)?.setOverload(false);
+    if (target_id === state.focusedPlayerId || target_id === state.playerId) {
+      state.bigRenderer.setOverload(false);
+    }
+    if (target_id === state.playerId) hideBoardEffect("overload");
+  } else if (effect === "freeze") {
+    if (target_id === state.playerId) {
+      state.effects.freeze = 0;
+      hideBoardEffect("freeze");
+    }
   } else if (effect === "hint") {
     state.bigRenderer.setHint(null);
     state.miniRenderers.get(state.playerId)?.setHint(null);
@@ -1229,16 +1307,20 @@ function applyShuffle(target_id, board, animate) {
 
 function clearAllEffectVisuals() {
   state.bigRenderer.setBlind(false);
+  state.bigRenderer.setOverload(false);
   state.bigRenderer.setHint(null);
   state.bigRenderer.clearGolden();
   for (const r of state.miniRenderers.values()) {
     r.setBlind(false);
+    r.setOverload(false);
     r.setHint(null);
     r.clearGolden();
   }
   hideBoardEffect("shield");
   hideBoardEffect("blind");
   hideBoardEffect("shuffle");
+  hideBoardEffect("overload");
+  hideBoardEffect("freeze");
   setCombo(0);
 }
 
@@ -1320,7 +1402,7 @@ function onGameStart(m) {
   state.events = [];
   state.variant = m.variant || state.variant || "classic";
   state.inventory = [null, null, null];
-  state.effects = { shield: 0, blind: 0, hint: 0 };
+  state.effects = { shield: 0, blind: 0, hint: 0, overload: 0, freeze: 0 };
   renderInventory();
   // Match countdown done — clear it
   state.matchDeadlineMs = null;

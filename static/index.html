@@ -98,14 +98,17 @@
       </div>
 
       <div class="section">
-        <h3>아이템 4종</h3>
-        <ul class="help-list">
-          <li><span class="help-icon" data-icon="hint"></span><span><strong>힌트</strong> — 내 보드에서 합10이 되는 두 칸을 3초간 강조 (자기 강화)</span></li>
-          <li><span class="help-icon" data-icon="shuffle"></span><span><strong>셔플</strong> — 내 보드의 남은 사과 숫자를 무작위 재배치 (자기 강화)</span></li>
-          <li><span class="help-icon attack" data-icon="blind"></span><span><strong>숫자 숨김</strong> — 상대 1명의 사과 숫자를 3초간 가림 (공격)</span></li>
-          <li><span class="help-icon" data-icon="shield"></span><span><strong>방어</strong> — 8초간 들어오는 공격 무효 + 이미 적용된 방해도 즉시 해제 (자기 강화)</span></li>
-        </ul>
-        <p class="helper">공격 아이템 타겟은 자기 자신을 제외한 <strong>상위 3등 안에서 랜덤</strong>으로 정해집니다. 등수에 따라 받는 아이템 종류 확률이 다릅니다 — 상위권은 방어/셔플, 중위권은 공격, 하위권은 힌트가 잘 나옵니다.</p>
+        <h3>아이템 6종 & 드롭 확률</h3>
+        <ul class="help-list" id="helpItemList"></ul>
+        <div class="tier-note">
+          <strong>등수 기준</strong> — 드롭 확률의 상위·중위·하위권은 <strong>현재 점수 순위</strong>로 정해져요.
+          <ul>
+            <li><b>3명 이상</b> — 점수 순위를 셋으로 나눠 위 1/3은 상위권, 가운데 1/3은 중위권, 아래 1/3은 하위권</li>
+            <li><b>2명</b> — 1등이 상위권, 2등이 하위권</li>
+            <li><b>혼자</b> — 항상 중위권</li>
+          </ul>
+        </div>
+        <p class="helper">공격 아이템 타겟은 자기 자신을 제외한 <strong>상위 3등 안에서 랜덤</strong>으로 정해집니다. 즉 점수가 높을수록 방어가 잘 나오고 공격을 더 자주 받게 돼요.</p>
       </div>
 
       <div class="section">

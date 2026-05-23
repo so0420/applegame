@@ -24,15 +24,20 @@ ATTACK_LOCKOUT = 10.0           # seconds before game end where attacks are bloc
 EFFECT_BLIND = 3.0              # number-hide duration
 EFFECT_HINT = 3.0               # hint highlight duration
 EFFECT_SHIELD = 8.0             # incoming-attack immunity duration
-ITEM_KINDS = ("hint", "blind", "shuffle", "shield")
+EFFECT_OVERLOAD = 3.0           # displayed-number deception duration
+EFFECT_FREEZE = 2.0             # input-lock duration
+ITEM_KINDS = ("hint", "shuffle", "blind", "overload", "freeze", "shield")
 # Rank-tier weighted drops: lower-ranked players get more self-help
-# (hint, self-shuffle), mid-tier gets attack, top-tier gets defense and
-# board-reset utility. Solo / single-player rooms fall back to "middle".
-# Weights are integers; relative ratios are what matter.
+# (hint, self-shuffle), mid-tier gets attacks (blind/overload/freeze),
+# top-tier gets defense (shield) and board-reset utility. Solo /
+# single-player rooms fall back to "middle". Weights are integers; each
+# tier intentionally sums to 20 so the help screen shows clean 5% steps.
+# NOTE: keep in sync with ITEM_DROP_WEIGHTS in static/js/main.js (the help
+# screen renders percentages from the JS mirror).
 ITEM_DROP_WEIGHTS: dict[str, dict[str, int]] = {
-    "top":    {"hint": 1, "blind": 1, "shuffle": 3, "shield": 5},
-    "middle": {"hint": 2, "blind": 5, "shuffle": 2, "shield": 1},
-    "bottom": {"hint": 5, "blind": 1, "shuffle": 3, "shield": 1},
+    "top":    {"hint": 2, "shuffle": 4, "blind": 2, "overload": 2, "freeze": 1, "shield": 9},
+    "middle": {"hint": 2, "shuffle": 3, "blind": 5, "overload": 5, "freeze": 3, "shield": 2},
+    "bottom": {"hint": 6, "shuffle": 5, "blind": 3, "overload": 2, "freeze": 2, "shield": 2},
 }
 # Golden apples: a fixed number of apples are marked golden at game
 # start (same positions for every player). Clearing one grants a
@@ -70,6 +75,8 @@ class Player:
     )
     blind_until: float = 0.0        # number-hide deadline imposed on me
     shield_until: float = 0.0       # incoming-attack immunity deadline
+    overload_until: float = 0.0     # displayed-number deception deadline
+    freeze_until: float = 0.0       # input-lock deadline imposed on me
     combo_count: int = 0            # consecutive-clear streak (within window)
     # Anti-macro state (server-side; not exposed to the client)
     submit_history: deque[float] = field(default_factory=lambda: deque(maxlen=64))
@@ -156,6 +163,8 @@ class Room:
             p.inventory = [None] * INVENTORY_SIZE
             p.blind_until = 0.0
             p.shield_until = 0.0
+            p.overload_until = 0.0
+            p.freeze_until = 0.0
             p.combo_count = 0
             p.submit_history.clear()
 
@@ -174,6 +183,8 @@ class Room:
             p.inventory = [None] * INVENTORY_SIZE
             p.blind_until = 0.0
             p.shield_until = 0.0
+            p.overload_until = 0.0
+            p.freeze_until = 0.0
             p.combo_count = 0
             p.submit_history.clear()
 
