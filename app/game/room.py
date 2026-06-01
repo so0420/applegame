@@ -34,10 +34,17 @@ ITEM_KINDS = ("hint", "shuffle", "blind", "overload", "freeze", "shield")
 # tier intentionally sums to 20 so the help screen shows clean 5% steps.
 # NOTE: keep in sync with ITEM_DROP_WEIGHTS in static/js/main.js (the help
 # screen renders percentages from the JS mirror).
+#
+# Balance notes (2026-06):
+#   - shuffle is strong, so it's heavily skewed to the bottom tier and made
+#     nearly absent at the top (top 5% / mid 15% / bottom 30%).
+#   - shield was over-dropping at the top (was 45%), letting leaders wall off
+#     every attack. Cut to 30% so attacks land more often while shield is
+#     still the single most likely top-tier drop.
 ITEM_DROP_WEIGHTS: dict[str, dict[str, int]] = {
-    "top":    {"hint": 2, "shuffle": 4, "blind": 2, "overload": 2, "freeze": 1, "shield": 9},
-    "middle": {"hint": 2, "shuffle": 3, "blind": 5, "overload": 5, "freeze": 3, "shield": 2},
-    "bottom": {"hint": 6, "shuffle": 5, "blind": 3, "overload": 2, "freeze": 2, "shield": 2},
+    "top":    {"hint": 4, "shuffle": 1, "blind": 4, "overload": 3, "freeze": 2, "shield": 6},
+    "middle": {"hint": 3, "shuffle": 3, "blind": 5, "overload": 4, "freeze": 3, "shield": 2},
+    "bottom": {"hint": 7, "shuffle": 6, "blind": 2, "overload": 2, "freeze": 2, "shield": 1},
 }
 # Golden apples: a fixed number of apples are marked golden at game
 # start (same positions for every player). Clearing one grants a
@@ -49,6 +56,11 @@ INITIAL_GOLDEN_COUNT = 3
 COMBO_THRESHOLD = 5
 COMBO_WINDOW_S = 2.0
 BIG_CLEAR_CELLS = 4
+# Drought relief: a player who goes this long without clearing a single
+# apple is handed one tier-weighted item (catch-up for whoever is stuck —
+# a dead board, an attack lockdown, or simply falling behind). Resets the
+# moment they clear again or receive a relief item.
+DROUGHT_SECONDS = 15.0
 # Anti-macro: every successful SUBMIT must satisfy these rate caps.
 # Drag-context checks are intentionally not part of this gate — they
 # had too many false-positive rejections from fast legitimate play
@@ -78,6 +90,11 @@ class Player:
     overload_until: float = 0.0     # displayed-number deception deadline
     freeze_until: float = 0.0       # input-lock deadline imposed on me
     combo_count: int = 0            # consecutive-clear streak (within window)
+    # Drought relief anchor: the timestamp we measure "time since last
+    # clear" against. Set to started_at at round start, bumped on every
+    # clear and on every relief grant. Separate from last_score_ts so the
+    # relief clock never perturbs combo / tiebreak logic.
+    drought_anchor: float = 0.0
     # Anti-macro state (server-side; not exposed to the client)
     submit_history: deque[float] = field(default_factory=lambda: deque(maxlen=64))
     # Medals earned in this room across rounds (friend mode only).
@@ -126,6 +143,16 @@ class Room:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     timer_task: asyncio.Task | None = None
     cleanup_task: asyncio.Task | None = None
+    drought_task: asyncio.Task | None = None
+    # Spectators: connections watching a friend room that's already playing /
+    # finished (e.g. someone who clicked an invite link mid-round). They get
+    # broadcasts and a state snapshot but are NOT game players — no board,
+    # no score, no leaderboard slot. Promoted to real players when the room
+    # returns to the lobby for the next round.
+    spectators: dict[str, Player] = field(default_factory=dict)
+    # Player ids the host kicked from this room. Blocks rejoin-by-code so a
+    # kicked player can't immediately walk back in. Persists across rounds.
+    banned: set[str] = field(default_factory=set)
     # Item-mode state
     variant: RoomVariant = "classic"
     # Shared list of (r, c) cells flagged golden at game start. Same for
@@ -166,6 +193,7 @@ class Room:
             p.overload_until = 0.0
             p.freeze_until = 0.0
             p.combo_count = 0
+            p.drought_anchor = 0.0
             p.submit_history.clear()
 
     def start(self) -> None:
@@ -186,6 +214,7 @@ class Room:
             p.overload_until = 0.0
             p.freeze_until = 0.0
             p.combo_count = 0
+            p.drought_anchor = self.started_at or 0.0
             p.submit_history.clear()
 
     def _init_boards(self) -> None:

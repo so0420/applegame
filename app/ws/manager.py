@@ -65,8 +65,10 @@ class RoomManager:
     async def remove(self, room_id: str) -> None:
         async with self._lock:
             room = self.rooms.pop(room_id, None)
-            if room and room.timer_task and not room.timer_task.done():
-                room.timer_task.cancel()
+            if room:
+                for task in (room.timer_task, room.drought_task):
+                    if task and not task.done():
+                        task.cancel()
                 log.info("room removed id=%s", room_id)
 
 
@@ -79,7 +81,13 @@ def make_player(nickname: str, ws: WebSocket | None = None) -> Player:
 
 
 async def broadcast(room: Room, message: dict[str, Any], exclude: str | None = None) -> None:
-    targets = [p for p in room.players.values() if p.ws and p.id != exclude]
+    # Spectators receive the same live feed as players (clears, drags, item
+    # effects, game_end) so a mid-game watcher sees the round unfold.
+    targets = [
+        p
+        for p in (*room.players.values(), *room.spectators.values())
+        if p.ws and p.id != exclude
+    ]
     if not targets:
         return
     await asyncio.gather(

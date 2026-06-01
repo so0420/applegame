@@ -22,11 +22,28 @@ except ImportError:
 import asyncio
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from .anti_vpn import AntiVPNMiddleware, _client_ip, is_blocked_ip
+from .anti_vpn import (
+    AntiVPNMiddleware,
+    _client_ip,
+    client_ip_from_request,
+    is_blocked_ip,
+)
+from .feedback import (
+    MAX_CONTACT_LEN,
+    MAX_MESSAGE_LEN,
+    MIN_MESSAGE_LEN,
+    rate_limited,
+    submit_feedback,
+)
 from .matchmaking import Matchmaker
 from .ws.handlers import _start_game, session
 from .ws.manager import RoomManager, broadcast
@@ -36,6 +53,10 @@ from .ws.manager import RoomManager, broadcast
 MONITORING_TOKEN = os.environ.get("MONITORING_TOKEN")
 # 1초마다 push — DOM diff 안 하고 통째 갱신해도 깜빡임 없는 정도.
 MONITORING_PUSH_INTERVAL = 1.0
+
+# 문의 요청 본문 상한 (바이트). 정상 페이로드는 메시지 2000 + 연락처 200자
+# 수준이라 16KB면 넉넉하다. 파싱 전에 막아 메모리 고갈 공격을 차단.
+MAX_FEEDBACK_BODY = 16 * 1024
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -83,6 +104,59 @@ matchmaker = Matchmaker(manager, on_start=_start_game, broadcast=broadcast)
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.post("/api/feedback", response_model=None)
+async def submit_feedback_endpoint(request: Request) -> JSONResponse:
+    """문의 접수 — SQLite 저장 + 디스코드 웹훅 알림.
+
+    실패 케이스는 JSON {ok:false, error:...} 로 통일. IP 기준 레이트리밋.
+    """
+    ip = client_ip_from_request(request)
+    if rate_limited(ip):
+        return JSONResponse(
+            {"ok": False, "error": "rate_limited"}, status_code=429,
+        )
+    # Cap the body BEFORE buffering/parsing — a legitimate payload is tiny
+    # (message ≤2000 + contact ≤200), so anything large is abuse. Check the
+    # advertised length first, then stream with a hard cap in case it lies
+    # or is absent, so we never read a multi-GB body into memory.
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > MAX_FEEDBACK_BODY:
+                return JSONResponse(
+                    {"ok": False, "error": "too_large"}, status_code=413,
+                )
+        except ValueError:
+            pass
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_FEEDBACK_BODY:
+            return JSONResponse(
+                {"ok": False, "error": "too_large"}, status_code=413,
+            )
+    try:
+        data = json.loads(body or b"null")
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": "bad_json"}, status_code=400)
+    if not isinstance(data, dict):
+        return JSONResponse({"ok": False, "error": "bad_json"}, status_code=400)
+    message = str(data.get("message") or "").strip()
+    contact = str(data.get("contact") or "").strip()
+    if len(message) < MIN_MESSAGE_LEN:
+        return JSONResponse({"ok": False, "error": "too_short"}, status_code=400)
+    delivered = await submit_feedback(
+        message[:MAX_MESSAGE_LEN], contact[:MAX_CONTACT_LEN] or None, ip,
+    )
+    # Discord-only: delivery must succeed for the submission to count, so a
+    # webhook outage / misconfig surfaces to the user instead of vanishing.
+    if not delivered:
+        return JSONResponse(
+            {"ok": False, "error": "delivery_failed"}, status_code=502,
+        )
+    return JSONResponse({"ok": True})
 
 
 @app.get("/robots.txt")

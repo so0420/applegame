@@ -23,6 +23,7 @@ from ..game.room import (
     CAPACITY_MIN,
     COMBO_THRESHOLD,
     COMBO_WINDOW_S,
+    DROUGHT_SECONDS,
     EFFECT_BLIND,
     EFFECT_FREEZE,
     EFFECT_HINT,
@@ -47,12 +48,45 @@ DISCONNECT_GRACE = 300.0  # seconds — keep room alive when all players disconn
 
 ATTACK_ITEMS = {"blind", "overload", "freeze"}
 
+# Player attribute holding each timed effect's expiry. Lets the
+# effect-expiry task re-check the live deadline so a re-applied effect
+# (e.g. stacking shields) isn't ended early by an older pending timer.
+EFFECT_DEADLINE_ATTR = {
+    "shield": "shield_until",
+    "blind": "blind_until",
+    "overload": "overload_until",
+    "freeze": "freeze_until",
+}
+
 
 def _t_ms(room: Room) -> int:
     """Milliseconds since this round started — used for replay event ordering."""
     if room.started_at is None:
         return 0
     return int((time.time() - room.started_at) * 1000)
+
+
+def _state_snapshot(room: Room) -> dict[str, Any]:
+    """Full game-state snapshot shared by reconnect and spectate.
+
+    Everything a client needs to render the live round from scratch:
+    per-player boards, the replay event log, scores, deadlines, and the
+    golden-apple positions (initial + per-player remaining)."""
+    return {
+        "room": room.public(),
+        "boards": room.boards,
+        "initial_board": room.initial_board,
+        "events": room.events,
+        "scores": {p.id: p.score for p in room.players.values()},
+        "ends_at": room.ends_at,
+        "state": room.state,
+        "winner_id": room.winner_id,
+        "initial_golden": [[r, c] for (r, c) in room.initial_golden],
+        "golden": {
+            pid: [[gr, gc] for (gr, gc) in cells]
+            for pid, cells in room.golden.items()
+        },
+    }
 
 
 def _anti_macro_reject_reason(player: Player, now: float) -> str | None:
@@ -120,7 +154,8 @@ async def session(
                 return
             async with r.lock:
                 existing = r.players.get(target_pid)
-                if existing is None or r.state == "waiting":
+                # Kicked players can't reconnect even if their slot lingers.
+                if existing is None or r.state == "waiting" or target_pid in r.banned:
                     await ws.send_json(S.msg(S.NOT_FOUND))
                     await ws.close()
                     return
@@ -140,24 +175,19 @@ async def session(
             if r.cleanup_task and not r.cleanup_task.done():
                 r.cleanup_task.cancel()
                 r.cleanup_task = None
+            # Resume drought relief if it was stopped when the room emptied.
+            if (
+                r.state == "playing"
+                and r.variant == "items"
+                and (r.drought_task is None or r.drought_task.done())
+            ):
+                r.drought_task = asyncio.create_task(_drought_loop(r))
             player = existing
             room = r
             await send(player, S.msg(
                 S.RECONNECTED,
                 player_id=player.id,
-                room=room.public(),
-                boards=room.boards,
-                initial_board=room.initial_board,
-                events=room.events,
-                scores={p.id: p.score for p in room.players.values()},
-                ends_at=room.ends_at,
-                state=room.state,
-                winner_id=room.winner_id,
-                initial_golden=[[r, c] for (r, c) in r.initial_golden],
-                golden={
-                    pid: [[gr, gc] for (gr, gc) in cells]
-                    for pid, cells in r.golden.items()
-                },
+                **_state_snapshot(room),
             ))
             await broadcast(
                 room,
@@ -179,12 +209,35 @@ async def session(
                 await ws.send_json(S.msg(S.NOT_FOUND))
                 await ws.close()
                 return
-            if room.is_full or room.state != "waiting":
+            if room.state == "waiting":
+                if room.is_full:
+                    await ws.send_json(S.msg(S.ROOM_FULL))
+                    await ws.close()
+                    return
+                async with room.lock:
+                    room.players[player.id] = player
+            elif room.mode == "friend":
+                # Round already running (or finished): admit as a spectator
+                # rather than bouncing them. They watch live and are promoted
+                # to a real player when the room returns to the lobby.
+                async with room.lock:
+                    room.spectators[player.id] = player
+                # A watcher arriving cancels any pending all-disconnected wipe.
+                if room.cleanup_task and not room.cleanup_task.done():
+                    room.cleanup_task.cancel()
+                    room.cleanup_task = None
+                await send(player, S.msg(
+                    S.SPECTATE,
+                    player_id=player.id,
+                    **_state_snapshot(room),
+                ))
+                await _message_loop(ws, player, room, manager)
+                return
+            else:
+                # solo / random rooms aren't spectatable via code.
                 await ws.send_json(S.msg(S.ROOM_FULL))
                 await ws.close()
                 return
-            async with room.lock:
-                room.players[player.id] = player
         elif intent == "match":
             raw_variant = hello.get("variant", "classic")
             match_variant = raw_variant if raw_variant in ("classic", "items") else "classic"
@@ -263,6 +316,37 @@ async def _message_loop(
                 room,
                 S.msg(S.RENAMED, player_id=player.id, nickname=new),
             )
+
+        elif mtype == S.HOST_RENAME:
+            # Host renames another player. Lobby-only, friend rooms only.
+            if room.mode != "friend" or player.id != room.host_id:
+                continue
+            if room.state != "waiting":
+                continue
+            target_id = (data.get("player_id") or "").strip()
+            new = (data.get("nickname") or "").strip()[:20]
+            if not target_id or not new:
+                continue
+            target = room.players.get(target_id)
+            if target is None:
+                continue
+            target.nickname = new
+            await broadcast(
+                room,
+                S.msg(S.RENAMED, player_id=target_id, nickname=new),
+            )
+
+        elif mtype == S.KICK:
+            # Host kicks + bans a player. Lobby-only so we never have to
+            # surgically unwind a player's mid-round board / score / rank.
+            if room.mode != "friend" or player.id != room.host_id:
+                continue
+            if room.state != "waiting":
+                continue
+            target_id = (data.get("player_id") or "").strip()
+            if not target_id or target_id == room.host_id:
+                continue
+            await _handle_kick(room, target_id, manager)
 
         elif mtype == S.START:
             if room.state != "waiting":
@@ -344,13 +428,62 @@ async def _start_game(room: Room) -> None:
             pass
 
     room.timer_task = asyncio.create_task(end_after_timeout())
+    # Items rounds get a drought-relief ticker (catch-up for stuck players).
+    if variant == "items":
+        room.drought_task = asyncio.create_task(_drought_loop(room))
+
+
+async def _drought_loop(room: Room) -> None:
+    """Hand a tier-weighted item to any connected player who hasn't cleared
+    an apple in DROUGHT_SECONDS — a catch-up valve for dead boards, attack
+    lockdowns, or simply falling behind. Resets that player's drought clock
+    on grant. Items variant only; lives for one round."""
+    try:
+        while True:
+            await asyncio.sleep(1.0)
+            if room.state != "playing":
+                return
+            now = time.time()
+            if room.started_at and now < room.started_at:
+                continue  # pre-game countdown — clock hasn't started
+            grants: list[tuple[Player, int, str]] = []
+            async with room.lock:
+                if room.state != "playing":
+                    return
+                for p in room.players.values():
+                    if not p.connected:
+                        continue
+                    anchor = p.drought_anchor or room.started_at or now
+                    if now - anchor < DROUGHT_SECONDS:
+                        continue
+                    free_slot = next(
+                        (i for i, s in enumerate(p.inventory) if s is None),
+                        None,
+                    )
+                    # Reset the clock either way so a full inventory doesn't
+                    # make us re-check (and re-skip) every single tick.
+                    p.drought_anchor = now
+                    if free_slot is None:
+                        continue
+                    tier = _player_tier(room, p.id)
+                    item = _weighted_drop(tier)
+                    p.inventory[free_slot] = item
+                    grants.append((p, free_slot, item))
+                t_ms = _t_ms(room)
+            for p, slot, item in grants:
+                await send(p, S.msg(
+                    S.ITEM_ACQUIRED,
+                    player_id=p.id, slot=slot, item=item, t_ms=t_ms,
+                ))
+    except asyncio.CancelledError:
+        return
 
 
 async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> None:
     r1, c1, r2, c2 = data.get("r1"), data.get("c1"), data.get("r2"), data.get("c2")
     if None in (r1, c1, r2, c2):
         return
-    item_msg: dict[str, Any] | None = None
+    item_msgs: list[dict[str, Any]] = []
     combo_after = 0
     combo_triggered = False
     async with room.lock:
@@ -386,6 +519,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         gained = len(cells)
         player.score += gained
         player.last_score_ts = now
+        player.drought_anchor = now  # a clear resets the drought-relief clock
         room.apples_left[player.id] -= len(cells)
         scores = {p.id: p.score for p in room.players.values()}
         t_ms = int((now - room.started_at) * 1000) if room.started_at else 0
@@ -396,15 +530,16 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             "cells": cells,
         })
 
-        # Three independent triggers — but the simultaneous-trigger cap
-        # means a single submit still drops at most one item.
+        # Three independent triggers. Each one grants its own item, and a
+        # golden pickup grants one item PER golden apple cleared — so a
+        # clear that satisfies several conditions hands out several items
+        # (capped only by free inventory slots).
         if room.variant == "items":
-            # --- 1. Golden apple pickup -----------------------------------
+            # --- 1. Golden apple pickup (one item per golden cleared) -----
             golden_cells = room.golden.get(player.id) or set()
             consumed = [tuple(cell) for cell in cells if tuple(cell) in golden_cells]
             for cell in consumed:
                 golden_cells.discard(cell)
-            golden_trigger = bool(consumed)
 
             # --- 2. Big clear ---------------------------------------------
             big_trigger = len(cells) >= BIG_CLEAR_CELLS
@@ -425,22 +560,28 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
                 combo_triggered = True
             combo_after = player.combo_count
 
-            if golden_trigger or big_trigger or combo_trigger:
+            drop_count = (
+                len(consumed)
+                + (1 if big_trigger else 0)
+                + (1 if combo_trigger else 0)
+            )
+            for _ in range(drop_count):
                 free_slot = next(
                     (i for i, s in enumerate(player.inventory) if s is None),
                     None,
                 )
-                if free_slot is not None:
-                    tier = _player_tier(room, player.id)
-                    item = _weighted_drop(tier)
-                    player.inventory[free_slot] = item
-                    item_msg = S.msg(
-                        S.ITEM_ACQUIRED,
-                        player_id=player.id,
-                        slot=free_slot,
-                        item=item,
-                        t_ms=t_ms,
-                    )
+                if free_slot is None:
+                    break  # inventory full — remaining drops are forfeited
+                tier = _player_tier(room, player.id)
+                item = _weighted_drop(tier)
+                player.inventory[free_slot] = item
+                item_msgs.append(S.msg(
+                    S.ITEM_ACQUIRED,
+                    player_id=player.id,
+                    slot=free_slot,
+                    item=item,
+                    t_ms=t_ms,
+                ))
 
     await broadcast(
         room,
@@ -454,7 +595,7 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             combo_triggered=combo_triggered,
         ),
     )
-    if item_msg is not None:
+    for item_msg in item_msgs:
         # Only the receiving player needs to know which item dropped —
         # opponents only see the inventory count update via room state.
         await send(player, item_msg)
@@ -572,7 +713,9 @@ async def _handle_use_item(
             until = now  # one-shot effect
         elif item == "shield":
             target_id = player.id
-            player.shield_until = now + EFFECT_SHIELD
+            # Stacking shields EXTEND rather than overwrite: a second shield
+            # used while one is active adds another full duration on top.
+            player.shield_until = max(player.shield_until, now) + EFFECT_SHIELD
             until = player.shield_until
             # Shield also cleanses any active attack effect on the user.
             for eff, attr in (
@@ -706,7 +849,22 @@ async def _clear_effect_after(
         return
     if room.state != "playing":
         return
+    attr = EFFECT_DEADLINE_ATTR.get(effect)
     async with room.lock:
+        if room.state != "playing":
+            return
+        # If the effect was re-applied / extended (e.g. a second shield),
+        # its live deadline now sits in the future — defer to the later
+        # timer instead of ending it early.
+        target = room.players.get(target_id)
+        if target is not None and attr is not None:
+            now = time.time()
+            deadline = getattr(target, attr, 0.0)
+            if deadline > now + 0.05:
+                asyncio.create_task(
+                    _clear_effect_after(room, target_id, effect, deadline - now)
+                )
+                return
         t_ms = _t_ms(room)
         room.events.append({
             "kind": "effect_end",
@@ -727,6 +885,8 @@ async def _end_game(room: Room) -> None:
         room.state = "finished"
         timer = room.timer_task
         room.timer_task = None
+        drought = room.drought_task
+        room.drought_task = None
         room.winner_id = room.determine_winner()
         scores = {p.id: p.score for p in room.players.values()}
         _award_medals(room)
@@ -735,6 +895,8 @@ async def _end_game(room: Room) -> None:
     current = asyncio.current_task()
     if timer is not None and timer is not current and not timer.done():
         timer.cancel()
+    if drought is not None and drought is not current and not drought.done():
+        drought.cancel()
     await broadcast(
         room,
         S.msg(S.GAME_END, scores=scores, winner_id=room.winner_id),
@@ -757,6 +919,35 @@ def _award_medals(room: Room) -> None:
         p.medals[kinds[i]] = p.medals.get(kinds[i], 0) + 1
 
 
+async def _handle_kick(room: Room, target_id: str, manager: RoomManager) -> None:
+    """Host removes + bans a player from the lobby. Note: with no accounts,
+    the ban only blocks the *same* session (reconnect / lingering id) from
+    re-entering — a fresh link click mints a new id and can rejoin. That's
+    the inherent ceiling of moderation in an anonymous game."""
+    async with room.lock:
+        target = room.players.get(target_id)
+        if target is None:
+            return
+        room.banned.add(target_id)
+        room.players.pop(target_id, None)
+        # Drop any stale per-player game state defensively (none in waiting).
+        room.boards.pop(target_id, None)
+        room.golden.pop(target_id, None)
+        room.apples_left.pop(target_id, None)
+        target_ws = target.ws
+        # Sever our claim on the slot so the kicked session's own cleanup
+        # won't re-broadcast peer_left or otherwise fight us.
+        target.ws = None
+        target.connected = False
+    if target_ws is not None:
+        try:
+            await target_ws.send_json(S.msg(S.KICKED))
+            await target_ws.close()
+        except Exception:  # noqa: BLE001
+            pass
+    await broadcast(room, S.msg(S.PEER_LEFT, player_id=target_id))
+
+
 async def _handle_rematch(room: Room, player: Player) -> None:
     async with room.lock:
         if room.state != "finished":
@@ -777,6 +968,16 @@ async def _handle_rematch(room: Room, player: Player) -> None:
             for pid in ghosts:
                 room.players.pop(pid, None)
         room.reset_for_rematch()
+        if room.mode == "friend":
+            # Promote every connected spectator (mid-round watcher) into a
+            # real player for the next round. We deliberately ignore capacity
+            # here: a watcher who was already present shouldn't be left in a
+            # half-state, and exceeding the soft cap by a few is harmless
+            # (set_capacity clamps up to the live player count anyway).
+            for sid, spec in list(room.spectators.items()):
+                room.spectators.pop(sid, None)
+                if spec.connected:
+                    room.players[sid] = spec
         room_snapshot = room.public()
     if room.mode == "friend":
         # Friend rooms go back to the lobby so new players can join via code
@@ -807,6 +1008,11 @@ async def _cleanup(
             return
         player.connected = False
         player.ws = None
+        # A spectator leaving just drops out of the watch list — no
+        # peer_left, no cleanup scheduling (they were never a player).
+        if player.id in room.spectators and player.id not in room.players:
+            room.spectators.pop(player.id, None)
+            return
         in_room = player.id in room.players
         state = room.state
 
@@ -840,6 +1046,11 @@ def _schedule_room_cleanup(room: Room, manager: RoomManager) -> None:
     """If everyone is disconnected, wipe the room after DISCONNECT_GRACE."""
     if room.cleanup_task and not room.cleanup_task.done():
         return  # already scheduled
+    # Stop the drought ticker while the room sits empty awaiting cleanup —
+    # nobody is connected to receive grants. It's restarted on reconnect.
+    if room.drought_task and not room.drought_task.done():
+        room.drought_task.cancel()
+        room.drought_task = None
 
     async def cleanup_after() -> None:
         try:

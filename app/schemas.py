@@ -6,6 +6,8 @@ from typing import Any
 # Client message types
 HELLO = "hello"          # {nickname?, intent: solo|create|join|match, code?, variant?}
 RENAME = "rename"        # {nickname}
+HOST_RENAME = "host_rename"    # {player_id, nickname} (host only, friend, waiting)
+KICK = "kick"            # {player_id} (host only, friend, waiting) — kick + ban
 SET_CAPACITY = "set_capacity"  # {capacity} (host only, waiting state)
 SET_VARIANT = "set_variant"    # {variant} classic|items (host only, waiting state)
 START = "start"          # {} (host triggers in friend; auto in others)
@@ -24,6 +26,8 @@ PEER_DISCONNECTED = "peer_disconnected"  # {player_id}
 PEER_RECONNECTED = "peer_reconnected"    # {player_id}
 RECONNECTED = "reconnected"   # full state on successful reconnect
 RENAMED = "renamed"           # {player_id, nickname}
+KICKED = "kicked"             # {} — sent to the player the host removed
+SPECTATE = "spectate"         # full state snapshot for a mid-game watcher
 CAPACITY_CHANGED = "capacity_changed"  # {capacity}
 VARIANT_CHANGED = "variant_changed"    # {variant}
 ROOM_RESET = "room_reset"     # {room} — friend room returned to lobby for next round

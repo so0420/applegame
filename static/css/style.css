@@ -143,7 +143,7 @@ svg { flex-shrink: 0; }
    ===================================================================== */
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .field span { color: var(--muted); font-size: 13px; }
-input[type="text"], input:not([type]), input[type="number"] {
+input[type="text"], input:not([type]), input[type="number"], textarea {
   background: var(--panel);
   color: var(--text);
   border: 1.5px solid var(--border-strong);
@@ -156,8 +156,9 @@ input[type="text"], input:not([type]), input[type="number"] {
   -webkit-user-select: text;
   user-select: text;
 }
-input::placeholder { color: var(--muted); }
-input:focus {
+textarea { resize: vertical; line-height: 1.5; min-height: 90px; }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+input:focus, textarea:focus {
   outline: none;
   border-color: var(--sage);
   box-shadow: 0 0 0 4px var(--sage-soft);
@@ -221,6 +222,34 @@ button.ghost:hover { background: var(--panel-2); color: var(--text); border-colo
 
 .center-btn { display: flex; justify-content: center; margin-top: 4px; }
 .center-btn button { min-width: 160px; }
+
+/* Home footer — slim text links (도움말 · 문의하기) with small icons. */
+.home-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  margin-top: 18px;
+}
+.link-btn {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  box-shadow: none;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.link-btn:hover { background: var(--panel-2); color: var(--sage-deep); }
+.link-btn:active { transform: none; }
+.link-btn-ico { display: inline-flex; color: var(--sage); }
+.link-btn-ico svg { width: 15px; height: 15px; }
+.home-footer-sep { width: 1px; height: 14px; background: var(--border-strong); margin: 0 2px; }
 
 #joinCode {
   text-transform: uppercase;
@@ -299,6 +328,8 @@ button.ghost:hover { background: var(--panel-2); color: var(--text); border-colo
   font-weight: 700;
   white-space: nowrap;
 }
+.lobby-row-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.lobby-row-actions:empty { display: none; }
 .nick-edit-btn {
   background: transparent;
   color: var(--muted);
@@ -311,6 +342,22 @@ button.ghost:hover { background: var(--panel-2); color: var(--text); border-colo
   box-shadow: none;
 }
 .nick-edit-btn:hover { background: var(--panel); color: var(--text); border-color: var(--sage); }
+/* Host-only kick button on other players' lobby rows. */
+.lobby-kick-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1.5px solid var(--border-strong);
+  padding: 5px 9px;
+  font-size: 13px;
+  border-radius: var(--radius-xs);
+  font-weight: 700;
+  flex-shrink: 0;
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+}
+.lobby-kick-btn svg { width: 15px; height: 15px; }
+.lobby-kick-btn:hover { background: #F8E3E0; color: var(--apple-deep); border-color: var(--apple); }
 .nick-edit-input {
   flex: 1;
   background: var(--panel);
@@ -530,6 +577,27 @@ button.ghost:hover { background: var(--panel-2); color: var(--text); border-colo
 .lb-name { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .lb-me-tag { color: var(--sage); font-size: 11px; }
 .lb-score { color: var(--text); font-weight: 800; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+/* Shield indicator on a leaderboard row (active 방어). */
+.lb-shield {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+  color: #fff;
+  background: var(--sage);
+  border-radius: 50%;
+  width: 17px;
+  height: 17px;
+  box-shadow: 0 0 0 2px var(--sage-soft);
+  animation: lb-shield-pulse 1.4s ease-in-out infinite;
+}
+.lb-shield[hidden] { display: none; }
+.lb-shield svg { width: 11px; height: 11px; }
+@keyframes lb-shield-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--sage-soft); }
+  50% { box-shadow: 0 0 0 4px var(--sage-soft); }
+}
 .lb-mini { display: block; width: 100%; height: auto; touch-action: none; background: var(--panel-2); border-radius: 6px; }
 
 /* Rank-medal accents on the top 3 */
@@ -562,6 +630,49 @@ button.ghost:hover { background: var(--panel-2); color: var(--text); border-colo
   box-shadow: var(--shadow-sm);
 }
 .focus-label.viewing { color: var(--sage-deep); background: var(--sage-soft); border-color: #CFE0C8; }
+
+/* Spectator banner — shown for a watcher who joined mid-round. */
+.spectate-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--sage), var(--sage-deep));
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-sm);
+}
+.spectate-banner[hidden] { display: none; }
+.spectate-banner .spectate-icon { display: inline-flex; }
+.spectate-banner .spectate-icon svg { width: 16px; height: 16px; }
+
+/* "No clearable apples" badge — floats over the board when the focused
+   board has zero sum-10 rectangles left. */
+.no-moves-badge {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(42, 42, 40, 0.86);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  z-index: 6;
+  white-space: nowrap;
+}
+.no-moves-badge[hidden] { display: none; }
+.no-moves-badge .no-moves-icon { display: inline-flex; }
+.no-moves-badge .no-moves-icon svg { width: 15px; height: 15px; }
 
 .board-wrap { position: relative; display: inline-block; line-height: 0; }
 #board {
@@ -618,6 +729,24 @@ button.ghost:hover { background: var(--panel-2); color: var(--text); border-colo
 }
 .inv-slot.has-item:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(229,162,31,0.34); }
 .inv-slot.has-item:active { transform: translateY(0); }
+
+/* Colour-code occupied slots by role so the item type reads at a glance:
+   self-help (sage), attack (red), defense (gold). */
+.inv-slot.item-self {
+  background: linear-gradient(180deg, #FFFFFF, var(--sage-soft));
+  border-color: #BFD6B6;
+  box-shadow: 0 3px 10px rgba(91, 117, 83, 0.26);
+  color: var(--sage-deep);
+}
+.inv-slot.item-self:hover { box-shadow: 0 6px 16px rgba(91, 117, 83, 0.34); }
+.inv-slot.item-attack {
+  background: linear-gradient(180deg, #FFFFFF, #F8E3E0);
+  border-color: #E8B6AE;
+  box-shadow: 0 3px 10px rgba(196, 69, 54, 0.26);
+  color: var(--apple-deep);
+}
+.inv-slot.item-attack:hover { box-shadow: 0 6px 16px rgba(196, 69, 54, 0.34); }
+/* defense keeps the gold treatment of .has-item — left as-is */
 .inv-slot.locked.has-item { opacity: 0.5; filter: grayscale(0.6); cursor: not-allowed; }
 .inv-slot.locked.has-item::after {
   content: "🔒";
@@ -754,6 +883,22 @@ button.ghost:hover { background: var(--panel-2); color: var(--text); border-colo
   color: var(--text-soft);
 }
 .help-list li > strong { color: var(--text); white-space: nowrap; }
+kbd {
+  display: inline-block;
+  min-width: 1.1em;
+  padding: 1px 6px;
+  font-family: var(--mono);
+  font-size: 0.86em;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
 .help-icon {
   flex-shrink: 0;
   width: 28px;
@@ -994,17 +1139,13 @@ body.on-replay .board-wrap::before {
   color: #2C6CA0;
   box-shadow: inset 0 0 0 4px rgba(120, 170, 220, 0.6);
 }
+/* Shield shows as a non-occluding inset ring only — the active state is
+   also indicated on the leaderboard row, so no in-board icon is needed. */
 .board-effect-overlay.shield {
   background: transparent;
   box-shadow: inset 0 0 0 4px rgba(91, 117, 83, 0.85);
   color: var(--sage-deep);
 }
-.board-effect-overlay.shield .effect-corner {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-}
-.board-effect-overlay.shield .effect-corner svg { width: 26px; height: 26px; }
 
 /* =====================================================================
    Mobile-rotated game view

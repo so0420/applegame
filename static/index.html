@@ -71,8 +71,10 @@
           <button class="mode secondary" data-intent="join-open"><span data-icon="join"></span>코드로 입장</button>
         </div>
         <p class="helper">합이 10이 되도록 사과를 드래그하세요. 2분 안에 더 많이 지운 쪽 승!</p>
-        <div class="lobby-actions" style="margin-top: 16px;">
-          <button id="helpOpenBtn" class="ghost">도움말</button>
+        <div class="home-footer">
+          <button id="helpOpenBtn" class="link-btn" type="button"><span class="link-btn-ico" data-icon="help"></span>도움말</button>
+          <span class="home-footer-sep" aria-hidden="true"></span>
+          <button id="feedbackOpenBtn" class="link-btn" type="button"><span class="link-btn-ico" data-icon="mail"></span>문의하기</button>
         </div>
       </div>
     </section>
@@ -94,7 +96,8 @@
           <li><span class="help-icon" data-icon="burst"></span><span><strong>4개 이상 동시 파괴</strong> — 한 번에 4개 이상의 사과를 합10으로 클리어하면 즉시 아이템</span></li>
           <li><span class="help-icon" data-icon="flame"></span><span><strong>콤보</strong> — 직전 클리어로부터 <strong>2초 이내</strong>에 다시 클리어할 때마다 콤보 +1. <strong>5콤보</strong>에 도달하면 아이템 (콤보 0으로 리셋). 2초가 지나면 새 콤보 체인 시작</span></li>
         </ul>
-        <p class="helper">한 번의 클리어로 <strong>여러 조건이 동시에 만족</strong>되더라도 아이템은 <strong>1개만</strong> 지급됩니다. 인벤토리는 최대 3개까지만 보유 가능하며 가득 차 있으면 새 아이템은 버려져요.</p>
+        <p class="helper">한 번의 클리어로 <strong>여러 조건이 동시에 만족</strong>되면 <strong>조건마다 1개씩</strong> 지급됩니다 (황금 사과는 <strong>개당 1개</strong> — 2개를 한 번에 없애면 2개). 인벤토리는 최대 3개까지만 보유 가능하며, 가득 차면 초과분은 버려져요.</p>
+        <p class="helper"><strong>15초 동안</strong> 한 칸도 못 없애면 막힌 플레이어를 위해 아이템 1개가 자동 지급돼요 (인벤토리에 빈 칸이 있을 때).</p>
       </div>
 
       <div class="section">
@@ -116,11 +119,32 @@
         <ul class="help-list">
           <li>게임 화면 상단의 인벤토리 슬롯(아이콘)을 클릭/탭하면 사용</li>
           <li>슬롯 우측 상단의 <strong>✕</strong>를 누르면 그 아이템을 <strong>버려서 슬롯을 비울 수 있어요</strong> (PC: 우클릭, 모바일: 길게 누르기도 동일)</li>
+          <li><strong>PC 단축키</strong> — 숫자 <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> 으로 1·2·3번 슬롯 사용, <kbd>Shift</kbd>+<kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> 또는 <kbd>Space</kbd>+<kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> 으로 버리기 (편한 쪽으로)</li>
           <li>경기 종료 <strong>마지막 10초</strong>에는 공격 아이템을 쓸 수 없음 (잠금)</li>
           <li>다시보기에서도 아이템 사용·효과가 시간 순으로 재현돼요</li>
         </ul>
         <div class="lobby-actions">
           <button id="helpBackBtn" class="ghost">뒤로</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Feedback / 문의 -->
+    <section class="screen" id="feedbackScreen" hidden>
+      <h2>문의하기</h2>
+      <div class="section">
+        <h3>의견 · 버그 제보</h3>
+        <p class="helper">버그, 불편한 점, 새 아이디어 무엇이든 적어주세요. 운영자에게 바로 전달됩니다.</p>
+        <div class="field">
+          <textarea id="feedbackMessage" maxlength="2000" rows="6" placeholder="내용을 입력하세요 (필수)"></textarea>
+        </div>
+        <div class="field">
+          <input id="feedbackContact" maxlength="200" placeholder="회신받을 연락처 — 이메일/디스코드/X(구 트위터) (선택)" autocomplete="off">
+        </div>
+        <p id="feedbackToast" class="copy-toast" hidden></p>
+        <div class="lobby-actions">
+          <button id="feedbackSubmit">보내기</button>
+          <button id="feedbackBackBtn" class="ghost">뒤로</button>
         </div>
       </div>
     </section>
@@ -267,7 +291,6 @@
             <button class="speed-btn active" data-speed="4">4×</button>
             <button class="speed-btn" data-speed="16">16×</button>
           </div>
-          <button id="replayClose" class="chip-btn">닫기</button>
         </div>
       </div>
       <div class="game-layout">
@@ -276,11 +299,19 @@
           <ul id="lbList"></ul>
         </aside>
         <main class="board-area">
+          <div id="spectateBanner" class="spectate-banner" hidden>
+            <span data-icon="match" class="spectate-icon"></span>
+            <span id="spectateText">관전 중 — 다음 판부터 참가합니다</span>
+          </div>
           <div id="focusLabel" class="focus-label" hidden></div>
           <div class="board-wrap">
             <canvas id="board"></canvas>
             <div id="startCountdown" class="start-countdown" hidden>
               <span id="startCountdownNum" class="start-countdown-num"></span>
+            </div>
+            <div id="noMovesBadge" class="no-moves-badge" hidden>
+              <span data-icon="shuffle" class="no-moves-icon"></span>
+              <span>지울 수 있는 사과가 없어요</span>
             </div>
           </div>
         </main>

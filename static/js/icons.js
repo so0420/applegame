@@ -215,6 +215,31 @@ const ICONS = {
       <path d="M7 4.5v15l13-7.5z"/>
     </svg>`,
 
+  mail: `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true" focusable="false">
+      <rect x="3" y="5" width="18" height="14" rx="2.5"/>
+      <path d="M4 7l8 6 8-6"/>
+    </svg>`,
+
+  help: `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="8.5"/>
+      <path d="M9.6 9.4a2.4 2.4 0 1 1 3.3 2.2c-.7.3-1 .8-1 1.5v.4"/>
+      <circle cx="11.9" cy="16.4" r="0.6" fill="currentColor" stroke="none"/>
+    </svg>`,
+
+  ban: `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="8.5"/>
+      <line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>`,
+
   pause: `
     <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"
          aria-hidden="true" focusable="false">

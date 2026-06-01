@@ -426,35 +426,67 @@ def test_combo_broken_when_gap_exceeds_window():
         g_ctx.__exit__(None, None, None)
 
 
-def test_simultaneous_triggers_grant_only_one_item():
-    """A single submit that fires golden + big-clear + combo (all three at
-    once) must still drop only one item."""
+def test_simultaneous_triggers_grant_one_item_per_trigger():
+    """A single submit that fires golden + big-clear + combo grants one item
+    PER trigger (golden + big + combo = 3 items), capped by free slots."""
     h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
     try:
-        # 5+5+5+5+5+5+5+5+5+5 will exceed 10; we want sum 10 with 5 cells.
         # 5 cells of value 2 sums to 10 (big-clear ✓).
         room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
         for c in range(5):
             room.boards[host_id][0][c] = 2
-        # Make (0,0) golden (golden ✓).
+        # Make (0,0) golden (golden ✓ — exactly one golden cell).
         room.golden[host_id] = {(0, 0)}
-        # Prearm combo so this clear becomes the threshold step.
+        # Prearm combo so this clear becomes the threshold step (combo ✓).
         room.players[host_id].combo_count = 4
         room.players[host_id].last_score_ts = time.time()
         host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 4})
         clear = _drain_until(host, "clear")
         assert len(clear["cells"]) == 5
         assert clear["combo"] == 0
-        # Exactly one item_acquired should follow, then no more.
-        acq = _drain_until(host, "item_acquired")
-        assert acq["item"] in ("hint", "shuffle", "blind", "overload", "freeze", "shield")
-        # Confirm no second item_acquired comes through.
+        # Three item_acquired messages, one per trigger.
+        for _ in range(3):
+            acq = _drain_until(host, "item_acquired")
+            assert acq["item"] in (
+                "hint", "shuffle", "blind", "overload", "freeze", "shield",
+            )
+        # Confirm no fourth item_acquired comes through.
         host.send_json({"type": "rename", "nickname": "ok"})
         nxt = host.receive_json()
         assert nxt["type"] == "renamed"
-        # And only one slot occupied
+        # All three slots occupied.
         filled = sum(1 for s in room.players[host_id].inventory if s is not None)
-        assert filled == 1
+        assert filled == 3
+    finally:
+        h_ctx.__exit__(None, None, None)
+        g_ctx.__exit__(None, None, None)
+
+
+def test_two_goldens_in_one_clear_grant_two_items():
+    """Clearing two golden apples in a single sum-10 region grants two
+    items (one per golden), not one."""
+    h_ctx, g_ctx, host, guest, host_id, guest_id, room = _start_items_game()
+    try:
+        # 5 + 5 = 10, both cells golden. 2 cells < BIG_CLEAR_CELLS and the
+        # first clear can't reach the combo threshold, so only the two
+        # goldens trigger drops.
+        room.boards[host_id] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[host_id][0][0] = 5
+        room.boards[host_id][0][1] = 5
+        room.golden[host_id] = {(0, 0), (0, 1)}
+        host.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        _drain_until(host, "clear")
+        for _ in range(2):
+            acq = _drain_until(host, "item_acquired")
+            assert acq["item"] in (
+                "hint", "shuffle", "blind", "overload", "freeze", "shield",
+            )
+        host.send_json({"type": "rename", "nickname": "ok"})
+        assert host.receive_json()["type"] == "renamed"
+        filled = sum(1 for s in room.players[host_id].inventory if s is not None)
+        assert filled == 2
+        assert (0, 0) not in room.golden[host_id]
+        assert (0, 1) not in room.golden[host_id]
     finally:
         h_ctx.__exit__(None, None, None)
         g_ctx.__exit__(None, None, None)

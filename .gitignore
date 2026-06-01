@@ -9,3 +9,5 @@ manifest.zip
 .env
 .env.local
 .env.*.local
+
+pytest_output.txt

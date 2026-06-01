@@ -10,6 +10,7 @@ const GAME_DURATION_MS = 120 * 1000;
 const screens = {
   home: $("home"),
   helpScreen: $("helpScreen"),
+  feedbackScreen: $("feedbackScreen"),
   joinScreen: $("joinScreen"),
   matchVariantScreen: $("matchVariantScreen"),
   lobby: $("lobby"),
@@ -74,6 +75,9 @@ const state = {
   effectTimers: {},
   initialGolden: [],   // [[r,c], ...] picked at game start
   combo: 0,
+  // True when watching a friend room we joined mid-round. No board of our
+  // own; input is disabled and we get promoted to a player next lobby.
+  isSpectator: false,
 };
 
 // `role` groups items for the help screen: self (자기 강화) / attack (공격)
@@ -93,9 +97,9 @@ const ITEM_ORDER = ["hint", "shuffle", "blind", "overload", "freeze", "shield"];
 // Used only to render the help screen's drop-rate table; the server is the
 // source of truth for actual drops. Keep the two in sync.
 const ITEM_DROP_WEIGHTS = {
-  top:    { hint: 2, shuffle: 4, blind: 2, overload: 2, freeze: 1, shield: 9 },
-  middle: { hint: 2, shuffle: 3, blind: 5, overload: 5, freeze: 3, shield: 2 },
-  bottom: { hint: 6, shuffle: 5, blind: 3, overload: 2, freeze: 2, shield: 2 },
+  top:    { hint: 4, shuffle: 1, blind: 4, overload: 3, freeze: 2, shield: 6 },
+  middle: { hint: 3, shuffle: 3, blind: 5, overload: 4, freeze: 3, shield: 2 },
+  bottom: { hint: 7, shuffle: 6, blind: 2, overload: 2, freeze: 2, shield: 1 },
 };
 
 // Build "icon + text" markup for a toast/tooltip. `name` keys into icons.js
@@ -291,6 +295,58 @@ $("matchVariantBackBtn")?.addEventListener("click", () => show("home"));
 $("helpOpenBtn")?.addEventListener("click", () => { renderHelpItems(); show("helpScreen"); });
 $("helpBackBtn")?.addEventListener("click", () => show("home"));
 
+// ---- Feedback / 문의 ----
+$("feedbackOpenBtn")?.addEventListener("click", () => {
+  $("feedbackMessage").value = "";
+  $("feedbackContact").value = "";
+  $("feedbackToast").hidden = true;
+  show("feedbackScreen");
+  $("feedbackMessage").focus();
+});
+$("feedbackBackBtn")?.addEventListener("click", () => show("home"));
+$("feedbackSubmit")?.addEventListener("click", submitFeedback);
+
+async function submitFeedback() {
+  const message = $("feedbackMessage").value.trim();
+  const contact = $("feedbackContact").value.trim();
+  const toast = $("feedbackToast");
+  const btn = $("feedbackSubmit");
+  const fail = (text) => {
+    toast.textContent = text;
+    toast.style.color = "var(--danger)";
+    toast.hidden = false;
+  };
+  if (message.length < 2) {
+    fail("내용을 2자 이상 입력해 주세요.");
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const resp = await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, contact }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.ok && data.ok) {
+      toast.textContent = "문의가 접수되었습니다. 감사합니다!";
+      toast.style.color = "";
+      toast.hidden = false;
+      $("feedbackMessage").value = "";
+      $("feedbackContact").value = "";
+      setTimeout(() => { if (!screens.feedbackScreen.hidden) show("home"); }, 1400);
+    } else if (resp.status === 429) {
+      fail("문의가 너무 잦습니다. 잠시 후 다시 시도해 주세요.");
+    } else {
+      fail("전송에 실패했습니다. 다시 시도해 주세요.");
+    }
+  } catch {
+    fail("네트워크 오류로 전송하지 못했습니다.");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // Render the help-screen item table (icon · name · role · desc · per-tier
 // drop %). Percentages are derived from the ITEM_DROP_WEIGHTS mirror.
 const ROLE_LABEL = { self: "자기 강화", attack: "공격", defense: "방어" };
@@ -387,6 +443,24 @@ function discardSlot(slot) {
   state.ws?.send("discard_item", { slot });
 }
 
+// Use the item in `slot`, applying the same guards as a slot click
+// (shared by the click handler and the number-key hotkeys).
+function useItemSlot(slot) {
+  if (!Number.isInteger(slot) || slot < 0 || slot > 2) return;
+  if (state.variant !== "items" || state.isSpectator) return;
+  const item = state.inventory[slot];
+  if (!item) return;
+  if (state.replayActive || isRoundOver()) return;
+  const remaining = state.endsAt ? state.endsAt - Date.now() : 0;
+  const locked = remaining > 0 && remaining <= 10_000;
+  if (ITEM_META[item]?.attack && locked) {
+    showItemToast("<span>⏳ 마지막 10초엔 공격 아이템을 쓸 수 없어요</span>");
+    return;
+  }
+  hideInvTooltip();
+  state.ws?.send("use_item", { slot });
+}
+
 document.querySelectorAll(".inv-slot").forEach((btn) => {
   btn.addEventListener("click", (ev) => {
     const slot = parseInt(btn.dataset.slot, 10);
@@ -400,12 +474,7 @@ document.querySelectorAll(".inv-slot").forEach((btn) => {
       discardSlot(slot);
       return;
     }
-    if (btn.classList.contains("locked")) {
-      showItemToast("<span>⏳ 마지막 10초엔 공격 아이템을 쓸 수 없어요</span>");
-      return;
-    }
-    hideInvTooltip();  // slot will be consumed; clear lingering tooltip
-    state.ws?.send("use_item", { slot });
+    useItemSlot(slot);
   });
   // Right-click → discard (desktop).
   btn.addEventListener("contextmenu", (ev) => {
@@ -473,6 +542,46 @@ document.querySelectorAll("#inventory .inv-slot").forEach((btn) => {
   btn.addEventListener("focus", () => showInvTooltipFor(btn));
   btn.addEventListener("blur", hideInvTooltip);
 });
+
+// ---- Item hotkeys: 1/2/3 use, Shift+1/2/3 OR Space+1/2/3 discard ----
+// Uses e.code (layout-independent, unaffected by Shift) so Shift+1 still
+// maps to slot 0 instead of arriving as "!". Space is a held discard
+// modifier (alternative to Shift) — tracked here since it isn't a real
+// modifier key.
+const HOTKEY_SLOT = {
+  Digit1: 0, Numpad1: 0,
+  Digit2: 1, Numpad2: 1,
+  Digit3: 2, Numpad3: 2,
+};
+let spaceHeld = false;
+function onItemsGameScreen() {
+  const tag = (document.activeElement?.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea") return false;  // don't hijack typing
+  return !screens.game.hidden && state.variant === "items" && !state.isSpectator;
+}
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Space") {
+    // Hold Space as a discard modifier. preventDefault stops the page from
+    // scrolling / a focused button from activating while it's held.
+    if (onItemsGameScreen()) {
+      spaceHeld = true;
+      e.preventDefault();
+    }
+    return;
+  }
+  if (e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
+  const slot = HOTKEY_SLOT[e.code];
+  if (slot === undefined) return;
+  if (!onItemsGameScreen()) return;
+  e.preventDefault();
+  if (e.shiftKey || spaceHeld) discardSlot(slot);
+  else useItemSlot(slot);
+});
+window.addEventListener("keyup", (e) => {
+  if (e.code === "Space") spaceHeld = false;
+});
+// Holding Space then alt-tabbing away never fires keyup — clear on blur.
+window.addEventListener("blur", () => { spaceHeld = false; });
 
 // Join screen
 $("joinBackBtn").addEventListener("click", () => show("home"));
@@ -607,6 +716,45 @@ function beginNicknameEdit(li, nameSpan) {
   input.select();
 }
 
+// Host editing another player's nickname inline. Sends host_rename; the
+// broadcast 'renamed' re-renders the lobby with the new name.
+function beginHostNicknameEdit(li, nameSpan, targetId) {
+  if (li.querySelector("input.nick-edit-input")) return;  // already editing
+  const player = state.room?.players.find((p) => p.id === targetId);
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "nick-edit-input";
+  input.maxLength = 20;
+  input.value = player?.nickname ?? "";
+  input.autocomplete = "off";
+  input.placeholder = "닉네임";
+
+  const commit = () => {
+    const v = input.value.trim().slice(0, 20);
+    if (v && v !== player?.nickname) {
+      state.ws?.send("host_rename", { player_id: targetId, nickname: v });
+      nameSpan.textContent = v;
+    }
+    li.replaceChild(nameSpan, input);
+  };
+  const cancel = () => { li.replaceChild(nameSpan, input); };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      input.removeEventListener("blur", commit);
+      cancel();
+    }
+  });
+  input.addEventListener("blur", commit);
+
+  li.replaceChild(input, nameSpan);
+  input.focus();
+  input.select();
+}
+
 $("copyCodeBtn").addEventListener("click", () => {
   const code = state.room?.id;
   if (!code) return;
@@ -682,9 +830,12 @@ function resetState() {
   state.inventory = [null, null, null];
   state.effects = { shield: 0, blind: 0, hint: 0, overload: 0, freeze: 0 };
   state.initialGolden = [];
+  state.isSpectator = false;
   $("inventory").hidden = true;
   $("mobileInventory").hidden = true;
   $("invTooltip").hidden = true;
+  $("noMovesBadge").hidden = true;
+  $("spectateBanner").hidden = true;
   document.querySelectorAll(".board-effect-overlay").forEach((el) => el.remove());
   if (state.matchTickerId) {
     clearInterval(state.matchTickerId);
@@ -881,8 +1032,26 @@ function bindSocket(ws) {
     onReconnected(e.detail);
   });
 
+  ws.addEventListener("msg:spectate", (e) => {
+    onSpectate(e.detail);
+  });
+
+  ws.addEventListener("msg:kicked", () => {
+    // Host removed us. Tear down without the "connection lost" reload path.
+    state._intentionalClose = true;
+    alert("방장이 당신을 내보냈습니다.");
+    try { state.ws?.close(); } catch {}
+    clearSession();
+    resetState();
+    show("home");
+  });
+
   ws.addEventListener("msg:room_reset", (e) => {
-    // Friend room came back to the lobby for the next round
+    // Friend room came back to the lobby for the next round. A spectator
+    // promoted into the roster lands here too — drop the spectator flag so
+    // they behave as a normal player from now on.
+    state.isSpectator = false;
+    $("spectateBanner").hidden = true;
     exitReplay();
     $("resultBanner").hidden = true;
   $("mobileResultActions").hidden = true;
@@ -970,6 +1139,7 @@ function bindSocket(ws) {
     }
     state.scores = scores;
     reorderAndRankLeaderboard();
+    updateNoMoves();
   });
 
   ws.addEventListener("msg:reject", () => {
@@ -978,6 +1148,7 @@ function bindSocket(ws) {
     if (pending?.applied && pending.cells.length > 0) {
       state.bigRenderer.restoreCells(pending.cells);
       state.miniRenderers.get(state.playerId)?.restoreCells(pending.cells);
+      updateNoMoves();
     }
   });
 
@@ -1065,25 +1236,6 @@ function onReconnected(m) {
       if (item) item.li.classList.add("disconnected");
     }
   }
-  // Restore active effects (blind / shield / hint) from the events log.
-  // Pair every effect_start with its effect_end; anything still open and
-  // not yet expired needs its visual re-applied so the player sees the
-  // same state they had before disconnect.
-  if (state.variant === "items") {
-    const nowMs = Date.now();
-    const open = new Map();  // "target_id|effect" -> effect_start event
-    for (const ev of state.events) {
-      if (ev.kind === "effect_start") {
-        open.set(`${ev.target_id}|${ev.effect}`, ev);
-      } else if (ev.kind === "effect_end") {
-        open.delete(`${ev.target_id}|${ev.effect}`);
-      }
-    }
-    for (const ev of open.values()) {
-      if (ev.until_ms && ev.until_ms <= nowMs) continue;
-      applyEffectStart(ev.target_id, ev.effect, ev.until_ms, ev.hint);
-    }
-  }
   reorderAndRankLeaderboard();
 
   if (m.state === "playing") {
@@ -1091,6 +1243,11 @@ function onReconnected(m) {
     startTimer();
     startProgress();
     maybeShowStartCountdown();
+    // Re-apply still-open effects AFTER the countdown step. A reconnect has
+    // startedAt in the past, so maybeShowStartCountdown clears the
+    // number-hide flag; re-applying here keeps an active blind visible
+    // instead of being wiped until its effect_end arrives.
+    reapplyOpenEffects();
     scheduleBgmAtRoundStart();
     saveSession();
     requestAnimationFrame(() => {
@@ -1100,6 +1257,90 @@ function onReconnected(m) {
   } else if (m.state === "finished") {
     showResult({ scores: m.scores || {}, winner_id: m.winner_id ?? null });
     clearSession();
+  } else {
+    show("game");
+  }
+}
+
+// Re-apply every still-open (started, not yet ended, not expired) timed
+// effect from the event log. Shared by reconnect + spectate. Must run AFTER
+// maybeShowStartCountdown() so the countdown's number-reveal doesn't wipe a
+// genuinely-active blind.
+function reapplyOpenEffects() {
+  if (state.variant !== "items") return;
+  const nowMs = Date.now();
+  const open = new Map();  // "target_id|effect" -> effect_start event
+  for (const ev of state.events) {
+    if (ev.kind === "effect_start") open.set(`${ev.target_id}|${ev.effect}`, ev);
+    else if (ev.kind === "effect_end") open.delete(`${ev.target_id}|${ev.effect}`);
+  }
+  for (const ev of open.values()) {
+    if (ev.until_ms && ev.until_ms <= nowMs) continue;
+    applyEffectStart(ev.target_id, ev.effect, ev.until_ms, ev.hint);
+  }
+}
+
+// ---- Spectator (joined a friend room mid-round) ----
+// Builds the live watch view from a state snapshot. Reuses the player
+// renderers but disables our own input (we own no board) and shows a
+// "관전 중" banner. We get promoted to a real player at the next lobby
+// (server side), which arrives as room_reset.
+function onSpectate(m) {
+  state.isSpectator = true;
+  state.playerId = m.player_id;   // matches no board → input self-disables
+  onRoomUpdate(m.room);
+  state.events = (m.events || []).map((e) => ({ ...e }));
+  state.scores = m.scores || {};
+  state.endsAt = (m.ends_at || 0) * 1000;
+  state.startedAt = state.endsAt - GAME_DURATION_MS;
+  state.initialBoard = m.initial_board ? m.initial_board.map((row) => row.slice()) : null;
+  state.initialGolden = Array.isArray(m.initial_golden)
+    ? m.initial_golden.map(([r, c]) => [r, c])
+    : [];
+
+  // Spectators have no inventory / combo of their own.
+  state.inventory = [null, null, null];
+  $("inventory").hidden = true;
+  $("mobileInventory").hidden = true;
+
+  buildLeaderboard();
+  if (m.boards) {
+    for (const [pid, board] of Object.entries(m.boards)) {
+      state.miniRenderers.get(pid)?.setBoard(board);
+    }
+  }
+  if (state.variant === "items" && m.golden && typeof m.golden === "object") {
+    for (const [pid, cells] of Object.entries(m.golden)) {
+      const renderer = state.miniRenderers.get(pid);
+      if (!renderer) continue;
+      renderer.clearGolden();
+      for (const [r, c] of cells) renderer.setGolden(r, c, true);
+    }
+  }
+  // Focus the first player so the big board shows a live game.
+  const firstId = state.room?.players?.[0]?.id;
+  if (firstId) setFocusedPlayer(firstId, /*forceCopy*/ true);
+
+  reorderAndRankLeaderboard();
+
+  $("spectateBanner").hidden = false;
+
+  if (m.state === "playing") {
+    show("game");
+    startTimer();
+    startProgress();
+    maybeShowStartCountdown();
+    // After the countdown step (which would clear the number-hide flag for
+    // an already-started round) — keeps an active blind on the focused
+    // player visible to the spectator.
+    reapplyOpenEffects();
+    requestAnimationFrame(() => {
+      state.bigRenderer.resize();
+      for (const r of state.miniRenderers.values()) r.resize();
+    });
+  } else if (m.state === "finished") {
+    show("game");
+    showResult({ scores: m.scores || {}, winner_id: m.winner_id ?? null });
   } else {
     show("game");
   }
@@ -1115,15 +1356,18 @@ function renderInventory() {
   for (const btn of document.querySelectorAll(".inv-slot")) {
     const slot = parseInt(btn.dataset.slot, 10);
     const item = state.inventory[slot];
+    btn.classList.remove("item-self", "item-attack", "item-defense");
     if (item && ITEM_META[item]) {
-      btn.classList.add("has-item");
+      const meta = ITEM_META[item];
+      // Colour-code by role (self / attack / defense) so the type reads
+      // at a glance without opening the tooltip.
+      btn.classList.add("has-item", `item-${meta.role}`);
       // Icon + ✕ button (corner discard). Re-render rather than mutate so
       // we don't need to track per-slot child nodes across re-renders.
       btn.innerHTML =
         `<span class="inv-icon">${icon(item)}</span>` +
         `<span class="inv-x" role="button" aria-label="버리기" title="버리기 (우클릭/롱프레스)">${icon("discard")}</span>`;
-      const isAttack = ITEM_META[item].attack;
-      btn.classList.toggle("locked", isAttack && locked);
+      btn.classList.toggle("locked", meta.attack && locked);
     } else {
       btn.classList.remove("has-item", "locked");
       btn.innerHTML = "";
@@ -1173,9 +1417,10 @@ function showBoardEffect(kind, durationMs) {
     el.className = `board-effect-overlay ${kind}`;
     const labels = { shield: "SHIELD", blind: "숫자 숨김", shuffle: "SHUFFLE", overload: "과부하", freeze: "결빙" };
     if (kind === "shield") {
-      // Shield draws as an inset ring; show a corner crest instead of a
-      // centred label so the board stays readable.
-      el.innerHTML = `<span class="effect-corner">${icon("shield")}</span>`;
+      // Shield is shown purely as a non-occluding inset ring (plus the
+      // leaderboard badge). No in-board icon — the old corner crest
+      // covered the top-right apple.
+      el.innerHTML = "";
     } else {
       el.innerHTML = `${icon(kind)}<span>${labels[kind] || ""}</span>`;
     }
@@ -1216,11 +1461,22 @@ function showItemUsedToast(by, item, target_id, blocked = false) {
     const target = state.room?.players.find((p) => p.id === target_id);
     const tName = escapeHtml(target?.nickname ?? "?");
     showItemToast(labelWithIcon(item, `${byName} → ${tName} (${meta.label})`) + blockSuffix);
+  } else if (meta.role === "defense" && by !== state.playerId) {
+    // Surface opponents' shields too, so attackers see who just walled up.
+    showItemToast(labelWithIcon(item, `${byName}님 ${meta.label} 사용`));
   }
+}
+
+// Toggle the shield badge on a player's leaderboard row.
+function setLeaderboardShield(pid, on) {
+  const el = state.lbItems.get(pid)?.shieldEl;
+  if (el) el.hidden = !on;
 }
 
 function applyEffectStart(target_id, effect, until_ms, hint) {
   const remainingMs = (until_ms ?? Date.now()) - Date.now();
+  // Shield shows on the leaderboard for everyone, not just me.
+  if (effect === "shield") setLeaderboardShield(target_id, true);
   if (target_id === state.playerId) {
     if (effect === "shield") {
       state.effects.shield = until_ms;
@@ -1260,6 +1516,7 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
 }
 
 function applyEffectEnd(target_id, effect) {
+  if (effect === "shield") setLeaderboardShield(target_id, false);
   if (effect === "shield" && target_id === state.playerId) {
     state.effects.shield = 0;
     hideBoardEffect("shield");
@@ -1303,6 +1560,7 @@ function applyShuffle(target_id, board, animate) {
       setTimeout(() => hideBoardEffect("shuffle"), 600);
     }
   }
+  if (target_id === state.focusedPlayerId) updateNoMoves();
 }
 
 function clearAllEffectVisuals() {
@@ -1321,6 +1579,7 @@ function clearAllEffectVisuals() {
   hideBoardEffect("shuffle");
   hideBoardEffect("overload");
   hideBoardEffect("freeze");
+  for (const pid of state.lbItems.keys()) setLeaderboardShield(pid, false);
   setCombo(0);
 }
 
@@ -1395,8 +1654,49 @@ function applyInitialGoldenToAll() {
   }
 }
 
+// True if `board` has at least one axis-aligned rectangle summing to 10.
+// Row-pair column sums + a two-pointer window — O(rows² · cols), trivial
+// for the 10×17 board. Values are non-negative so the sliding window is valid.
+function boardHasMove(board) {
+  if (!board || !board.length) return true;  // unknown → don't flash the badge
+  const R = board.length;
+  const C = board[0].length;
+  for (let r1 = 0; r1 < R; r1++) {
+    const colSum = new Array(C).fill(0);
+    for (let r2 = r1; r2 < R; r2++) {
+      const row = board[r2];
+      let lo = 0;
+      let sum = 0;
+      for (let hi = 0; hi < C; hi++) {
+        colSum[hi] += row[hi] || 0;
+        sum += colSum[hi];
+        while (sum > 10 && lo <= hi) { sum -= colSum[lo]; lo++; }
+        if (sum === 10) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Show / hide the "no clearable apples" badge for the board currently on
+// the big canvas. Only while a live round is actually in progress.
+function updateNoMoves() {
+  const badge = $("noMovesBadge");
+  if (!badge) return;
+  const live =
+    !screens.game.hidden &&
+    !state.replayActive &&
+    !isRoundOver() &&
+    !(state.startedAt && Date.now() < state.startedAt);
+  badge.hidden = !live || boardHasMove(state.bigRenderer?.board);
+}
+
 // ---- Game lifecycle ----
 function onGameStart(m) {
+  // A fresh round means we're a full player (covers promoted spectators).
+  state.isSpectator = false;
+  $("spectateBanner").hidden = true;
+  $("noMovesBadge").hidden = true;
   state.endsAt = m.ends_at * 1000;
   state.startedAt = state.endsAt - GAME_DURATION_MS;
   state.events = [];
@@ -1552,6 +1852,7 @@ function renderLobby() {
   const list = $("playerList");
   list.innerHTML = "";
   const canRenameMe = state.mode !== "random";  // random matches stay anonymous
+  const iAmHost = state.playerId === state.hostId;
   for (const p of state.room.players) {
     const li = document.createElement("li");
     if (p.id === state.hostId) li.classList.add("host");
@@ -1566,6 +1867,8 @@ function renderLobby() {
     appendMedalBadges(medalsSpan, p.medals);
     if (medalsSpan.childNodes.length > 0) li.appendChild(medalsSpan);
 
+    const actions = document.createElement("span");
+    actions.className = "lobby-row-actions";
     if (isMe && canRenameMe) {
       const editBtn = document.createElement("button");
       editBtn.type = "button";
@@ -1573,16 +1876,38 @@ function renderLobby() {
       editBtn.setAttribute("aria-label", "닉네임 변경");
       editBtn.textContent = "✎";
       editBtn.addEventListener("click", () => beginNicknameEdit(li, nameSpan));
-      li.appendChild(editBtn);
-    } else {
-      li.appendChild(document.createElement("span"));  // spacer for grid
+      actions.appendChild(editBtn);
+    } else if (iAmHost && state.mode === "friend" && !isMe) {
+      // Host can rename + kick other players (lobby only).
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "nick-edit-btn";
+      editBtn.setAttribute("aria-label", `${p.nickname} 닉네임 변경`);
+      editBtn.title = "닉네임 변경";
+      editBtn.textContent = "✎";
+      editBtn.addEventListener("click", () => beginHostNicknameEdit(li, nameSpan, p.id));
+      actions.appendChild(editBtn);
+
+      const kickBtn = document.createElement("button");
+      kickBtn.type = "button";
+      kickBtn.className = "lobby-kick-btn";
+      kickBtn.setAttribute("aria-label", `${p.nickname} 내보내기`);
+      kickBtn.title = "내보내기";
+      kickBtn.innerHTML = icon("ban");
+      kickBtn.addEventListener("click", () => {
+        if (confirm(`'${p.nickname}'님을 방에서 내보낼까요?`)) {
+          state.ws?.send("kick", { player_id: p.id });
+        }
+      });
+      actions.appendChild(kickBtn);
     }
+    li.appendChild(actions);
     list.appendChild(li);
   }
   const cnt = state.room.players.length;
   const cap = state.room.capacity ?? 2;
   $("playerCount").textContent = `${cnt} / ${cap}`;
-  const isHost = state.playerId === state.hostId;
+  const isHost = iAmHost;
   const canStart = state.mode === "friend" && isHost && cnt >= 2;
   $("startBtn").hidden = !canStart;
 
@@ -1609,7 +1934,7 @@ function renderLobby() {
       b.disabled = !isHost;
     });
     if (isHost && state.variant === "items") {
-      const chips = ["hint", "blind", "shuffle", "shield"]
+      const chips = ITEM_ORDER
         .map((k) => `<span class="ico">${icon(k)}</span>`)
         .join(" ");
       $("variantHelper").innerHTML =
@@ -1688,13 +2013,19 @@ function buildLeaderboard() {
     const nameEl = document.createElement("span");
     nameEl.className = "lb-name";
     nameEl.textContent = p.nickname + (p.id === state.playerId ? " (me)" : "");
+    // Shield indicator — shown while this player has an active shield.
+    const shieldEl = document.createElement("span");
+    shieldEl.className = "lb-shield";
+    shieldEl.title = "방어 중";
+    shieldEl.innerHTML = icon("shield");
+    shieldEl.hidden = true;
     const scoreEl = document.createElement("span");
     scoreEl.className = "lb-score";
     scoreEl.textContent = "0";
 
     const row = document.createElement("div");
     row.className = "lb-row";
-    row.append(rankEl, nameEl, scoreEl);
+    row.append(rankEl, nameEl, shieldEl, scoreEl);
 
     const c = document.createElement("canvas");
     c.className = "lb-mini";
@@ -1706,7 +2037,7 @@ function buildLeaderboard() {
     const renderer = new BoardRenderer(c, { mini: true });
     if (state.initialBoard) renderer.setBoard(state.initialBoard);
     state.miniRenderers.set(p.id, renderer);
-    state.lbItems.set(p.id, { li, rankEl, nameEl, scoreEl });
+    state.lbItems.set(p.id, { li, rankEl, nameEl, scoreEl, shieldEl });
   }
   $("lbCount").textContent = String(players.length);
   $("totalPlayers").textContent = String(players.length);
@@ -1747,6 +2078,7 @@ function setFocusedPlayer(pid, forceCopy = true) {
   }
   // Close mobile drawer after picking
   screens.game.classList.remove("drawer-open");
+  updateNoMoves();
 }
 
 function reorderAndRankLeaderboard(scoresOverride = null) {
@@ -1851,8 +2183,11 @@ function showResult(detail) {
 
   let title = "";
   let subtitle = "";
-  const replaySub = "🔁 리플레이 자동 재생 중 — 닫기를 누르면 멈춥니다";
-  if (state.mode === "solo") {
+  const replaySub = "🔁 리플레이 자동 재생 중 — 막대를 드래그해 구간 이동";
+  if (state.isSpectator) {
+    title = "경기 종료";
+    subtitle = replaySub;
+  } else if (state.mode === "solo") {
     title = `점수 ${scores[state.playerId] ?? 0} / 170`;
     subtitle = replaySub;
   } else if (winner_id === null || winner_id === undefined) {
@@ -1938,6 +2273,7 @@ function startReplay() {
   // the scrubber. We're already on the game screen.
   $("replayControls").hidden = false;
   $("topProgress").hidden = true;
+  $("noMovesBadge").hidden = true;
   $("replayBadge").hidden = false;
   $("replayBadgeMobile").hidden = false;
   document.body.classList.add("on-replay");
@@ -2109,9 +2445,10 @@ $("replayPlayPause").addEventListener("click", () => {
   updateReplayPlayPause();
 });
 
-// Close (just stops the replay; user stays on result mode and can scrub
-// or hit 새 게임 / 홈으로 in the result banner)
-$("replayClose").addEventListener("click", () => exitReplay());
+// The replay '닫기' (close) button was removed — closing the replay left
+// the board/leaderboard frozen on a mid-replay frame, which read as a bug.
+// The replay now simply plays to the end and pauses; 새 게임 / 홈으로 in the
+// result banner are the way out (both call exitReplay internally).
 
 // Scrubber drag/click
 (function bindScrubber() {

@@ -156,7 +156,17 @@ export class BoardRenderer {
       this.board[r][c] = 0;
       this.goldenCells.delete(`${r},${c}`);
     }
+    this._dropHintCells(cells);
     this._scheduleAnim();
+  }
+
+  // Drop any of `cells` from the active hint highlight so a stale border
+  // can't survive the apple it was pointing at.
+  _dropHintCells(cells) {
+    if (!this.hintCells || !this.hintCells.length) return;
+    const gone = new Set(cells.map(([r, c]) => `${r},${c}`));
+    const left = this.hintCells.filter(([r, c]) => !gone.has(`${r},${c}`));
+    this.hintCells = left.length ? left : null;
   }
 
   // Instant clear (no fade) — used by replay seek so we can rebuild
@@ -167,6 +177,7 @@ export class BoardRenderer {
       this.board[r][c] = 0;
       this.goldenCells.delete(`${r},${c}`);
     }
+    this._dropHintCells(cells);
     this.render();
   }
 
@@ -332,9 +343,12 @@ export class BoardRenderer {
       ctx.translate(dx, dy);
     }
 
-    // Hint highlight (under apples so they remain readable)
+    // Hint highlight (under apples so they remain readable). Skip cells
+    // already cleared so the highlight border vanishes the instant a
+    // hinted apple is removed (otherwise it lingers over an empty cell).
     if (this.hintCells) {
       for (const [r, c] of this.hintCells) {
+        if (!this.board[r] || !this.board[r][c]) continue;
         const x = pad + c * cs;
         const y = pad + r * cs;
         ctx.fillStyle = HINT_FILL;
