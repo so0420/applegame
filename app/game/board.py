@@ -88,3 +88,45 @@ def find_sum10_pair(board: list[list[int]]) -> list[tuple[int, int]] | None:
                 if total > 10:
                     break
     return None
+
+
+def find_sum10_rect(
+    board: list[list[int]], rng: random.Random | None = None
+) -> tuple[int, int, int, int] | None:
+    """Pick a random axis-aligned rectangle (r1,c1,r2,c2) whose non-zero
+    cells sum to 10, or None if the board has no move left. Used by the AI
+    partner. Smaller rectangles are strongly preferred so the bot's moves
+    look human (mostly pairs / short runs).
+
+    Row-pair column sums + a sliding window: for each (r1,r2) and each right
+    edge, the shrinking left pointer yields the window summing to 10.
+    """
+    rng = rng or random.Random()
+    candidates: list[tuple[int, int, int, int, int]] = []  # (r1,c1,r2,c2,ncells)
+    for r1 in range(ROWS):
+        col_sum = [0] * COLS
+        for r2 in range(r1, ROWS):
+            for c in range(COLS):
+                col_sum[c] += board[r2][c]
+            lo = 0
+            window = 0
+            for hi in range(COLS):
+                window += col_sum[hi]
+                while window > TARGET_SUM and lo <= hi:
+                    window -= col_sum[lo]
+                    lo += 1
+                if window == TARGET_SUM:
+                    ncells = sum(
+                        1
+                        for rr in range(r1, r2 + 1)
+                        for cc in range(lo, hi + 1)
+                        if board[rr][cc] != 0
+                    )
+                    if ncells:
+                        candidates.append((r1, lo, r2, hi, ncells))
+    if not candidates:
+        return None
+    # Weight ~ 1/ncells^2 so 2-cell clears dominate, big ones are rare.
+    weights = [1.0 / (cand[4] ** 2) for cand in candidates]
+    pick = rng.choices(candidates, weights=weights, k=1)[0]
+    return (pick[0], pick[1], pick[2], pick[3])

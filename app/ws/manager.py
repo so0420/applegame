@@ -66,7 +66,8 @@ class RoomManager:
         async with self._lock:
             room = self.rooms.pop(room_id, None)
             if room:
-                for task in (room.timer_task, room.drought_task):
+                tasks = [room.timer_task, room.drought_task, *room.bot_tasks]
+                for task in tasks:
                     if task and not task.done():
                         task.cancel()
                 log.info("room removed id=%s", room_id)
@@ -83,17 +84,25 @@ def make_player(nickname: str, ws: WebSocket | None = None) -> Player:
 async def broadcast(room: Room, message: dict[str, Any], exclude: str | None = None) -> None:
     # Spectators receive the same live feed as players (clears, drags, item
     # effects, game_end) so a mid-game watcher sees the round unfold.
+    #
+    # Send sequentially rather than via asyncio.gather: one failing/slow
+    # client is isolated by the per-send try/except, and at our scale (a
+    # handful of players) the cost is negligible. gather() additionally
+    # raced with the test harness's blocking receive and intermittently
+    # dropped messages, which sequential sends avoid.
     targets = [
         p
         for p in (*room.players.values(), *room.spectators.values())
         if p.ws and p.id != exclude
     ]
-    if not targets:
-        return
-    await asyncio.gather(
-        *(p.ws.send_json(message) for p in targets if p.ws),
-        return_exceptions=True,
-    )
+    for p in targets:
+        ws = p.ws
+        if ws is None:
+            continue
+        try:
+            await ws.send_json(message)
+        except Exception as e:  # noqa: BLE001
+            log.debug("broadcast send failed to %s: %s", p.id, e)
 
 
 async def send(player: Player, message: dict[str, Any]) -> None:

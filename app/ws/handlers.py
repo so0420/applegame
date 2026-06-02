@@ -12,6 +12,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .. import schemas as S
 from ..game.board import (
     find_sum10_pair,
+    find_sum10_rect,
     shuffle_remaining,
     validate_and_clear,
 )
@@ -36,6 +37,7 @@ from ..game.room import (
     MAX_SUBMITS_PER_1S,
     MAX_SUBMITS_PER_3S,
     MIN_SUBMIT_GAP_S,
+    TEAM_MIN_PLAYERS,
     Player,
     Room,
 )
@@ -47,6 +49,21 @@ log = logging.getLogger(__name__)
 DISCONNECT_GRACE = 300.0  # seconds — keep room alive when all players disconnected
 
 ATTACK_ITEMS = {"blind", "overload", "freeze"}
+
+# AI partner (team mode) pacing — seconds per clear. The bot mirrors its
+# human partner's recent cadence, clamped to this band so it never carries
+# nor dead-weights the team.
+BOT_DEFAULT_DELAY = 2.6
+BOT_MIN_DELAY = 1.2
+BOT_MAX_DELAY = 4.5
+
+# Test seam. Always True in production. The periodic drought-relief and AI
+# bot loops broadcast on a timer; under Starlette's TestClient each WS
+# connection runs in its own event loop, so a timer broadcast from one loop
+# can race cross-loop delivery and make multi-connection tests flaky.
+# conftest flips this off by default; tests that exercise those loops turn it
+# back on. Production uses a single event loop, so this never matters there.
+BACKGROUND_LOOPS_ENABLED = True
 
 # Player attribute holding each timed effect's expiry. Lets the
 # effect-expiry task re-check the live deadline so a re-applied effect
@@ -77,7 +94,7 @@ def _state_snapshot(room: Room) -> dict[str, Any]:
         "boards": room.boards,
         "initial_board": room.initial_board,
         "events": room.events,
-        "scores": {p.id: p.score for p in room.players.values()},
+        "scores": {a.id: a.score for a in room.actors()},
         "ends_at": room.ends_at,
         "state": room.state,
         "winner_id": room.winner_id,
@@ -175,13 +192,23 @@ async def session(
             if r.cleanup_task and not r.cleanup_task.done():
                 r.cleanup_task.cancel()
                 r.cleanup_task = None
-            # Resume drought relief if it was stopped when the room emptied.
+            # Resume drought relief + AI loops if they were stopped when the
+            # room emptied.
             if (
-                r.state == "playing"
-                and r.variant == "items"
+                BACKGROUND_LOOPS_ENABLED
+                and r.state == "playing"
+                and r.variant in ("items", "team")
                 and (r.drought_task is None or r.drought_task.done())
             ):
                 r.drought_task = asyncio.create_task(_drought_loop(r))
+            if (
+                BACKGROUND_LOOPS_ENABLED
+                and r.state == "playing"
+                and r.variant == "team"
+                and not any(not bt.done() for bt in r.bot_tasks)
+                and any(m.is_bot for t in r.teams.values() for m in t.members)
+            ):
+                _start_bot_loops(r)
             player = existing
             room = r
             await send(player, S.msg(
@@ -240,7 +267,9 @@ async def session(
                 return
         elif intent == "match":
             raw_variant = hello.get("variant", "classic")
-            match_variant = raw_variant if raw_variant in ("classic", "items") else "classic"
+            match_variant = (
+                raw_variant if raw_variant in ("classic", "items", "team") else "classic"
+            )
             room, _deadline_ms = await matchmaker.enqueue(player, variant=match_variant)
         else:
             await ws.send_json(S.msg(S.ERROR, code="bad_intent", message=f"unknown intent {intent!r}"))
@@ -299,7 +328,7 @@ async def _message_loop(
             if room.state != "waiting":
                 continue
             new_variant = data.get("variant")
-            if new_variant not in ("classic", "items"):
+            if new_variant not in ("classic", "items", "team"):
                 continue
             async with room.lock:
                 room.variant = new_variant
@@ -354,9 +383,15 @@ async def _message_loop(
             if room.mode == "friend" and player.id != room.host_id:
                 await send(player, S.msg(S.ERROR, code="not_host", message="host only"))
                 continue
-            if room.mode == "friend" and len(room.players) < 2:
-                await send(player, S.msg(S.ERROR, code="not_ready", message="need at least 2 players"))
-                continue
+            if room.mode == "friend":
+                humans = sum(1 for p in room.players.values() if not p.is_bot)
+                need = TEAM_MIN_PLAYERS if room.variant == "team" else 2
+                if humans < need:
+                    await send(player, S.msg(
+                        S.ERROR, code="not_ready",
+                        message=f"need at least {need} players",
+                    ))
+                    continue
             await _start_game(room)
 
         elif mtype == S.DRAG_UPDATE:
@@ -370,9 +405,15 @@ async def _message_loop(
             if player.last_drag == new_drag:
                 continue
             player.last_drag = new_drag
+            # owner_id = the board this drag draws on (team in team mode).
+            actor = room.actor_for(player.id)
+            owner_id = actor.id if actor is not None else player.id
             await broadcast(
                 room,
-                S.msg(S.PEER_DRAG, player_id=player.id, r1=r1, c1=c1, r2=r2, c2=c2),
+                S.msg(
+                    S.PEER_DRAG, player_id=player.id, owner_id=owner_id,
+                    r1=r1, c1=c1, r2=r2, c2=c2,
+                ),
                 exclude=player.id,
             )
 
@@ -384,14 +425,14 @@ async def _message_loop(
         elif mtype == S.USE_ITEM:
             if room.state != "playing":
                 continue
-            if room.variant != "items":
+            if room.variant not in ("items", "team"):
                 continue
             await _handle_use_item(room, player, data)
 
         elif mtype == S.DISCARD_ITEM:
             if room.state != "playing":
                 continue
-            if room.variant != "items":
+            if room.variant not in ("items", "team"):
                 continue
             await _handle_discard_item(room, player, data)
 
@@ -410,13 +451,17 @@ async def _start_game(room: Room) -> None:
         initial = room.initial_board
         variant = room.variant
         golden = [[r, c] for (r, c) in room.initial_golden]
+        teams = [t.public() for t in room.teams.values()] if variant == "team" else None
     payload: dict[str, Any] = {
         "board": initial,
         "ends_at": room.ends_at,
         "variant": variant,
     }
-    if variant == "items":
+    # Both items and team variants use golden apples / item drops.
+    if variant in ("items", "team"):
         payload["golden"] = golden
+    if teams is not None:
+        payload["teams"] = teams
     await broadcast(room, S.msg(S.GAME_START, **payload))
 
     async def end_after_timeout() -> None:
@@ -428,16 +473,45 @@ async def _start_game(room: Room) -> None:
             pass
 
     room.timer_task = asyncio.create_task(end_after_timeout())
-    # Items rounds get a drought-relief ticker (catch-up for stuck players).
-    if variant == "items":
+    # Items/team rounds get a drought-relief ticker (catch-up for stuck units).
+    if variant in ("items", "team") and BACKGROUND_LOOPS_ENABLED:
         room.drought_task = asyncio.create_task(_drought_loop(room))
+    # Team mode: spin up an AI loop for every team that has a bot member.
+    if variant == "team" and BACKGROUND_LOOPS_ENABLED:
+        _start_bot_loops(room)
+
+
+def _drought_grant_pass(room: Room, now: float) -> list[tuple[Any, int, str]]:
+    """One drought-relief pass: hand a tier-weighted item to any connected
+    unit (team or player) that hasn't cleared in DROUGHT_SECONDS. Mutates
+    inventories + drought anchors, returns [(actor, slot, item), ...]. Pure
+    state work — the caller owns room.lock / sending."""
+    grants: list[tuple[Any, int, str]] = []
+    for actor in room.actors():
+        if not actor.connected:
+            continue
+        anchor = actor.drought_anchor or room.started_at or now
+        if now - anchor < DROUGHT_SECONDS:
+            continue
+        free_slot = next(
+            (i for i, s in enumerate(actor.inventory) if s is None),
+            None,
+        )
+        # Reset the clock either way so a full inventory doesn't make us
+        # re-check (and re-skip) every single tick.
+        actor.drought_anchor = now
+        if free_slot is None:
+            continue
+        item = _weighted_drop(_player_tier(room, actor.id))
+        actor.inventory[free_slot] = item
+        grants.append((actor, free_slot, item))
+    return grants
 
 
 async def _drought_loop(room: Room) -> None:
-    """Hand a tier-weighted item to any connected player who hasn't cleared
-    an apple in DROUGHT_SECONDS — a catch-up valve for dead boards, attack
-    lockdowns, or simply falling behind. Resets that player's drought clock
-    on grant. Items variant only; lives for one round."""
+    """Ticker that catch-up grants items to stuck units (dead boards, attack
+    lockdowns, falling behind). Items/team variants only; lives for one
+    round. The per-tick state work lives in _drought_grant_pass."""
     try:
         while True:
             await asyncio.sleep(1.0)
@@ -446,37 +520,191 @@ async def _drought_loop(room: Room) -> None:
             now = time.time()
             if room.started_at and now < room.started_at:
                 continue  # pre-game countdown — clock hasn't started
-            grants: list[tuple[Player, int, str]] = []
             async with room.lock:
                 if room.state != "playing":
                     return
-                for p in room.players.values():
-                    if not p.connected:
-                        continue
-                    anchor = p.drought_anchor or room.started_at or now
-                    if now - anchor < DROUGHT_SECONDS:
-                        continue
-                    free_slot = next(
-                        (i for i, s in enumerate(p.inventory) if s is None),
-                        None,
-                    )
-                    # Reset the clock either way so a full inventory doesn't
-                    # make us re-check (and re-skip) every single tick.
-                    p.drought_anchor = now
-                    if free_slot is None:
-                        continue
-                    tier = _player_tier(room, p.id)
-                    item = _weighted_drop(tier)
-                    p.inventory[free_slot] = item
-                    grants.append((p, free_slot, item))
+                grants = _drought_grant_pass(room, now)
                 t_ms = _t_ms(room)
-            for p, slot, item in grants:
-                await send(p, S.msg(
+            for actor, slot, item in grants:
+                msg = S.msg(
                     S.ITEM_ACQUIRED,
-                    player_id=p.id, slot=slot, item=item, t_ms=t_ms,
-                ))
+                    player_id=actor.id, slot=slot, item=item, t_ms=t_ms,
+                )
+                for p in _owner_human_players(room, actor):
+                    await send(p, msg)
     except asyncio.CancelledError:
         return
+
+
+def _owner_human_players(room: Room, actor: Any) -> list[Player]:
+    """Human controller(s) behind a board owner — both teammates in team
+    mode, or just the player otherwise. Bots are excluded (no ws)."""
+    if room.variant == "team":
+        return actor.human_members()
+    return [actor]
+
+
+def _actor_by_id(room: Room, owner_id: str | None) -> Any:
+    """Resolve a board-owner id back to its actor (Team or Player)."""
+    if owner_id is None:
+        return None
+    if room.variant == "team":
+        return room.teams.get(owner_id)
+    return room.players.get(owner_id)
+
+
+# --- AI partner (team mode) -------------------------------------------------
+
+def _bot_delay(room: Room, team: Any, now: float) -> float:
+    """Seconds until the bot's next clear — paced to mirror its human
+    partner's recent clear cadence so the bot is about as good as them."""
+    partner = None
+    if team is not None:
+        partner = next(
+            (m for m in team.members if not m.is_bot and m.connected), None
+        )
+    base = BOT_DEFAULT_DELAY
+    if partner is not None and len(partner.submit_history) >= 2:
+        recent = list(partner.submit_history)[-6:]
+        intervals = [recent[i] - recent[i - 1] for i in range(1, len(recent))]
+        if intervals:
+            base = sum(intervals) / len(intervals)
+    base = max(BOT_MIN_DELAY, min(BOT_MAX_DELAY, base))
+    return base * (0.7 + 0.6 * random.random())
+
+
+def _start_bot_loops(room: Room) -> None:
+    room.bot_tasks = []
+    for team in room.teams.values():
+        bot = next((m for m in team.members if m.is_bot), None)
+        if bot is not None:
+            room.bot_tasks.append(
+                asyncio.create_task(_bot_loop(room, team.id, bot.id))
+            )
+
+
+async def _bot_loop(room: Room, team_id: str, bot_id: str) -> None:
+    try:
+        while True:
+            delay = _bot_delay(room, room.teams.get(team_id), time.time())
+            await asyncio.sleep(delay)
+            if room.state != "playing":
+                return
+            await _bot_step(room, team_id, bot_id)
+    except asyncio.CancelledError:
+        return
+
+
+async def _bot_step(room: Room, team_id: str, bot_id: str) -> None:
+    """One AI clear on the team's shared board, attributed to the bot. Goes
+    through the same scoring core as a human submit (so it can trigger
+    golden / combo / drops into the shared inventory). Bots never use items."""
+    bcast: dict[str, Any] | None = None
+    item_msgs: list[dict[str, Any]] = []
+    team: Any = None
+    async with room.lock:
+        if room.state != "playing":
+            return
+        team = room.teams.get(team_id)
+        if team is None:
+            return
+        now = time.time()
+        if room.started_at and now < room.started_at:
+            return  # still in pre-game countdown
+        board = room.boards.get(team_id)
+        if board is None:
+            return
+        rect = find_sum10_rect(board)
+        if rect is None:
+            return  # board has no move right now — try again next tick
+        cells = validate_and_clear(board, *rect)
+        if cells is None:
+            return
+        scores, t_ms, combo_after, combo_triggered, item_msgs = _process_clear(
+            room, team, cells, now,
+        )
+        bcast = S.msg(
+            S.CLEAR, player_id=team_id, by=bot_id, cells=cells, scores=scores,
+            t_ms=t_ms, combo=combo_after, combo_triggered=combo_triggered,
+        )
+    await broadcast(room, bcast)
+    if item_msgs:
+        for p in _owner_human_players(room, team):
+            for m in item_msgs:
+                await send(p, m)
+
+
+def _process_clear(
+    room: Room, actor: Any, cells: list, now: float,
+) -> tuple[dict, int, int, bool, list]:
+    """Apply a validated clear to its board owner (Player or Team). Caller
+    holds room.lock. Mutates score / golden / combo / drops / apples_left and
+    appends the replay event. Returns
+    (scores, t_ms, combo_after, combo_triggered, item_msgs)."""
+    prev_clear_ts = actor.last_score_ts
+    actor.score += len(cells)
+    actor.last_score_ts = now
+    actor.drought_anchor = now  # a clear resets the drought-relief clock
+    room.apples_left[actor.id] -= len(cells)
+    scores = {a.id: a.score for a in room.actors()}
+    t_ms = int((now - room.started_at) * 1000) if room.started_at else 0
+    room.events.append({
+        "kind": "clear",
+        "t_ms": t_ms,
+        "player_id": actor.id,   # board owner (team id in team mode)
+        "cells": cells,
+    })
+
+    item_msgs: list[dict[str, Any]] = []
+    combo_after = 0
+    combo_triggered = False
+    # Three independent triggers. Each grants its own item; a golden pickup
+    # grants one item PER golden apple cleared. Capped by free inventory slots.
+    if room.variant in ("items", "team"):
+        golden_cells = room.golden.get(actor.id) or set()
+        consumed = [tuple(cell) for cell in cells if tuple(cell) in golden_cells]
+        for cell in consumed:
+            golden_cells.discard(cell)
+
+        big_trigger = len(cells) >= BIG_CLEAR_CELLS
+
+        in_window = (
+            prev_clear_ts > 0.0
+            and (now - prev_clear_ts) <= COMBO_WINDOW_S
+        )
+        if in_window:
+            actor.combo_count += 1
+        else:
+            actor.combo_count = 1  # start a fresh chain
+        combo_trigger = actor.combo_count >= COMBO_THRESHOLD
+        if combo_trigger:
+            actor.combo_count = 0
+            combo_triggered = True
+        combo_after = actor.combo_count
+
+        drop_count = (
+            len(consumed)
+            + (1 if big_trigger else 0)
+            + (1 if combo_trigger else 0)
+        )
+        for _ in range(drop_count):
+            free_slot = next(
+                (i for i, s in enumerate(actor.inventory) if s is None),
+                None,
+            )
+            if free_slot is None:
+                break  # inventory full — remaining drops are forfeited
+            tier = _player_tier(room, actor.id)
+            item = _weighted_drop(tier)
+            actor.inventory[free_slot] = item
+            item_msgs.append(S.msg(
+                S.ITEM_ACQUIRED,
+                player_id=actor.id,
+                slot=free_slot,
+                item=item,
+                t_ms=t_ms,
+            ))
+    return scores, t_ms, combo_after, combo_triggered, item_msgs
 
 
 async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> None:
@@ -484,12 +712,13 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
     if None in (r1, c1, r2, c2):
         return
     item_msgs: list[dict[str, Any]] = []
-    combo_after = 0
-    combo_triggered = False
     async with room.lock:
         if room.state != "playing":
             return
-        my_board = room.boards.get(player.id)
+        actor = room.actor_for(player.id)
+        if actor is None:
+            return  # spectator / not seated (e.g. team not yet assigned)
+        my_board = room.boards.get(actor.id)
         if my_board is None:
             return
         now = time.time()
@@ -515,79 +744,16 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
         # Record only successful submits in the rate window so legitimate
         # mistypes don't count against the rate cap.
         player.submit_history.append(now)
-        prev_clear_ts = player.last_score_ts
-        gained = len(cells)
-        player.score += gained
-        player.last_score_ts = now
-        player.drought_anchor = now  # a clear resets the drought-relief clock
-        room.apples_left[player.id] -= len(cells)
-        scores = {p.id: p.score for p in room.players.values()}
-        t_ms = int((now - room.started_at) * 1000) if room.started_at else 0
-        room.events.append({
-            "kind": "clear",
-            "t_ms": t_ms,
-            "player_id": player.id,
-            "cells": cells,
-        })
-
-        # Three independent triggers. Each one grants its own item, and a
-        # golden pickup grants one item PER golden apple cleared — so a
-        # clear that satisfies several conditions hands out several items
-        # (capped only by free inventory slots).
-        if room.variant == "items":
-            # --- 1. Golden apple pickup (one item per golden cleared) -----
-            golden_cells = room.golden.get(player.id) or set()
-            consumed = [tuple(cell) for cell in cells if tuple(cell) in golden_cells]
-            for cell in consumed:
-                golden_cells.discard(cell)
-
-            # --- 2. Big clear ---------------------------------------------
-            big_trigger = len(cells) >= BIG_CLEAR_CELLS
-
-            # --- 3. Combo (consecutive within COMBO_WINDOW_S) -------------
-            in_window = (
-                prev_clear_ts > 0.0
-                and (now - prev_clear_ts) <= COMBO_WINDOW_S
-            )
-            if in_window:
-                player.combo_count += 1
-            else:
-                player.combo_count = 1  # start a fresh chain
-            combo_trigger = player.combo_count >= COMBO_THRESHOLD
-            if combo_trigger:
-                # Streak consumed by the drop, regardless of inventory fit.
-                player.combo_count = 0
-                combo_triggered = True
-            combo_after = player.combo_count
-
-            drop_count = (
-                len(consumed)
-                + (1 if big_trigger else 0)
-                + (1 if combo_trigger else 0)
-            )
-            for _ in range(drop_count):
-                free_slot = next(
-                    (i for i, s in enumerate(player.inventory) if s is None),
-                    None,
-                )
-                if free_slot is None:
-                    break  # inventory full — remaining drops are forfeited
-                tier = _player_tier(room, player.id)
-                item = _weighted_drop(tier)
-                player.inventory[free_slot] = item
-                item_msgs.append(S.msg(
-                    S.ITEM_ACQUIRED,
-                    player_id=player.id,
-                    slot=free_slot,
-                    item=item,
-                    t_ms=t_ms,
-                ))
+        scores, t_ms, combo_after, combo_triggered, item_msgs = _process_clear(
+            room, actor, cells, now,
+        )
 
     await broadcast(
         room,
         S.msg(
             S.CLEAR,
-            player_id=player.id,
+            player_id=actor.id,   # board owner (team id in team mode)
+            by=player.id,         # who actually cleared
             cells=cells,
             scores=scores,
             t_ms=t_ms,
@@ -595,27 +761,26 @@ async def _handle_submit(room: Room, player: Player, data: dict[str, Any]) -> No
             combo_triggered=combo_triggered,
         ),
     )
-    for item_msg in item_msgs:
-        # Only the receiving player needs to know which item dropped —
-        # opponents only see the inventory count update via room state.
-        await send(player, item_msg)
+    # Item drops go to the owner's human controller(s) — both teammates in
+    # team mode. Opponents only see the inventory count via room state.
+    if item_msgs:
+        for p in _owner_human_players(room, actor):
+            for item_msg in item_msgs:
+                await send(p, item_msg)
 
 
-def _player_tier(room: Room, player_id: str) -> str:
-    """Bucket the player into top / middle / bottom by current score.
-
-    Solo or single-player rooms always return "middle" so the drop pool
-    stays neutral. Two-player rooms map rank-1 → top, rank-2 → bottom.
-    For 3+ players we split into rough thirds.
-    """
-    players = sorted(
-        room.players.values(),
-        key=lambda p: (-p.score, p.last_score_ts or float("inf")),
+def _player_tier(room: Room, owner_id: str) -> str:
+    """Bucket the board owner (team or player) into top / middle / bottom by
+    current score. Single-unit rooms always return "middle". Two units map
+    rank-1 → top, rank-2 → bottom; 3+ split into rough thirds."""
+    actors = sorted(
+        room.actors(),
+        key=lambda a: (-a.score, a.last_score_ts or float("inf")),
     )
-    n = len(players)
+    n = len(actors)
     if n <= 1:
         return "middle"
-    idx = next((i for i, p in enumerate(players) if p.id == player_id), 0)
+    idx = next((i for i, a in enumerate(actors) if a.id == owner_id), 0)
     if n == 2:
         return "top" if idx == 0 else "bottom"
     if idx * 3 < n:
@@ -634,16 +799,16 @@ def _weighted_drop(tier: str) -> str:
 
 
 def _pick_attack_target(room: Room, attacker_id: str) -> str | None:
-    """Top-3 by score (attacker excluded) → random one of them.
-    Falls back to any other connected player when <3 candidates."""
+    """Top-3 by score among OTHER connected units (teams/players, attacker's
+    own unit excluded) → random one. attacker_id is an owner id."""
     candidates = [
-        p for p in room.players.values()
-        if p.id != attacker_id and p.connected
+        a for a in room.actors()
+        if a.id != attacker_id and a.connected
     ]
     if not candidates:
         return None
     candidates.sort(
-        key=lambda p: (-p.score, p.last_score_ts or float("inf")),
+        key=lambda a: (-a.score, a.last_score_ts or float("inf")),
     )
     pool = candidates[:3]
     return random.choice(pool).id
@@ -653,7 +818,7 @@ async def _handle_use_item(
     room: Room, player: Player, data: dict[str, Any]
 ) -> None:
     slot = data.get("slot")
-    if not isinstance(slot, int) or not (0 <= slot < INVENTORY_SIZE):
+    if not isinstance(slot, int) or slot < 0:
         return
     now = time.time()
     payload: dict[str, Any] = {}
@@ -662,7 +827,10 @@ async def _handle_use_item(
             return
         if room.started_at is not None and now < room.started_at:
             return  # silently ignore during countdown
-        item = player.inventory[slot]
+        actor = room.actor_for(player.id)
+        if actor is None or slot >= len(actor.inventory):
+            return
+        item = actor.inventory[slot]
         if item is None:
             return
         # Late-game lockout for attack items so a last-second strike can't
@@ -686,15 +854,15 @@ async def _handle_use_item(
             "freeze": ("freeze_until", EFFECT_FREEZE),
         }
         if item == "hint":
-            pair = find_sum10_pair(room.boards.get(player.id, []))
+            pair = find_sum10_pair(room.boards.get(actor.id, []))
             payload["hint"] = [{"r": r, "c": c} for (r, c) in (pair or [])]
-            target_id = player.id
+            target_id = actor.id
             until = now + EFFECT_HINT
         elif item in ATTACK_DEADLINE:
-            target_id = _pick_attack_target(room, player.id)
-            if target_id is None:
+            target_id = _pick_attack_target(room, actor.id)
+            target = _actor_by_id(room, target_id) if target_id else None
+            if target is None:
                 return
-            target = room.players[target_id]
             attr, dur = ATTACK_DEADLINE[item]
             if target.shield_until > now:
                 blocked = True
@@ -704,32 +872,32 @@ async def _handle_use_item(
                 setattr(target, attr, deadline)
                 until = deadline
         elif item == "shuffle":
-            # Self-shuffle — re-rolls the player's own remaining apples.
-            target_id = player.id
-            target_board = room.boards.get(player.id)
+            # Self-shuffle — re-rolls the owner's own remaining apples.
+            target_id = actor.id
+            target_board = room.boards.get(actor.id)
             if target_board is None:
                 return
             shuffle_remaining(target_board)
             until = now  # one-shot effect
         elif item == "shield":
-            target_id = player.id
+            target_id = actor.id
             # Stacking shields EXTEND rather than overwrite: a second shield
             # used while one is active adds another full duration on top.
-            player.shield_until = max(player.shield_until, now) + EFFECT_SHIELD
-            until = player.shield_until
-            # Shield also cleanses any active attack effect on the user.
+            actor.shield_until = max(actor.shield_until, now) + EFFECT_SHIELD
+            until = actor.shield_until
+            # Shield also cleanses any active attack effect on the owner.
             for eff, attr in (
                 ("blind", "blind_until"),
                 ("overload", "overload_until"),
                 ("freeze", "freeze_until"),
             ):
-                if getattr(player, attr) > now:
-                    setattr(player, attr, 0.0)
+                if getattr(actor, attr) > now:
+                    setattr(actor, attr, 0.0)
                     cleansed.append(eff)
         else:
             return
         # Consume the slot
-        player.inventory[slot] = None
+        actor.inventory[slot] = None
         payload["target_id"] = target_id
         t_ms = _t_ms(room)
         room.events.append({
@@ -740,12 +908,13 @@ async def _handle_use_item(
             "target_id": target_id,
             "blocked": blocked,
         })
+        owner_id = actor.id
         for eff in cleansed:
             # Record each cleansed effect so replay shows it ending here.
             room.events.append({
                 "kind": "effect_end",
                 "t_ms": t_ms,
-                "target_id": player.id,
+                "target_id": owner_id,
                 "effect": eff,
             })
 
@@ -763,7 +932,7 @@ async def _handle_use_item(
     for eff in cleansed:
         await broadcast(
             room,
-            S.msg(S.EFFECT_END, target_id=player.id, effect=eff, t_ms=t_ms),
+            S.msg(S.EFFECT_END, target_id=owner_id, effect=eff, t_ms=t_ms),
         )
 
     if blocked:
@@ -825,19 +994,24 @@ async def _handle_discard_item(
 ) -> None:
     """Throw away an inventory slot without using its effect.
 
-    No broadcast — discard is private. Other players don't see inventory
-    contents anyway, so there's nothing meaningful to tell them.
+    Operates on the OWNER's inventory (the shared team pool in team mode,
+    else the player's). In team mode the ack goes to both teammates so the
+    shared inventory view stays in sync; opponents see nothing either way.
     """
     slot = data.get("slot")
-    if not isinstance(slot, int) or not (0 <= slot < INVENTORY_SIZE):
+    if not isinstance(slot, int) or slot < 0:
         return
     async with room.lock:
         if room.state != "playing":
             return
-        if player.inventory[slot] is None:
+        actor = room.actor_for(player.id)
+        if actor is None or slot >= len(actor.inventory):
             return
-        player.inventory[slot] = None
-    await send(player, S.msg(S.ITEM_DISCARDED, slot=slot))
+        if actor.inventory[slot] is None:
+            return
+        actor.inventory[slot] = None
+    for p in _owner_human_players(room, actor):
+        await send(p, S.msg(S.ITEM_DISCARDED, slot=slot))
 
 
 async def _clear_effect_after(
@@ -856,7 +1030,7 @@ async def _clear_effect_after(
         # If the effect was re-applied / extended (e.g. a second shield),
         # its live deadline now sits in the future — defer to the later
         # timer instead of ending it early.
-        target = room.players.get(target_id)
+        target = _actor_by_id(room, target_id)
         if target is not None and attr is not None:
             now = time.time()
             deadline = getattr(target, attr, 0.0)
@@ -888,7 +1062,9 @@ async def _end_game(room: Room) -> None:
         drought = room.drought_task
         room.drought_task = None
         room.winner_id = room.determine_winner()
-        scores = {p.id: p.score for p in room.players.values()}
+        scores = {a.id: a.score for a in room.actors()}
+        bots = list(room.bot_tasks)
+        room.bot_tasks = []
         _award_medals(room)
     # Cancel the timeout task only if we're ending early (not from inside it).
     # Cancelling the current task would interrupt the broadcast below.
@@ -897,6 +1073,9 @@ async def _end_game(room: Room) -> None:
         timer.cancel()
     if drought is not None and drought is not current and not drought.done():
         drought.cancel()
+    for bt in bots:
+        if bt is not current and not bt.done():
+            bt.cancel()
     await broadcast(
         room,
         S.msg(S.GAME_END, scores=scores, winner_id=room.winner_id),
@@ -904,19 +1083,22 @@ async def _end_game(room: Room) -> None:
 
 
 def _award_medals(room: Room) -> None:
-    """Friend rooms only: bump top-3 medal counts on the Player objects.
-    Two-player rooms get no bronze; players who scored 0 get nothing."""
+    """Friend rooms only: bump top-3 medal counts. Over actors — in team
+    mode each medal goes to both human members of the team. Units that
+    scored 0 get nothing; 2-unit rooms get no bronze."""
     if room.mode != "friend":
         return
     scored = sorted(
-        room.players.values(),
-        key=lambda p: (-p.score, p.last_score_ts or float("inf")),
+        room.actors(),
+        key=lambda a: (-a.score, a.last_score_ts or float("inf")),
     )
     kinds = ("gold", "silver", "bronze")
-    for i, p in enumerate(scored[:3]):
-        if p.score <= 0:
+    for i, a in enumerate(scored[:3]):
+        if a.score <= 0:
             continue
-        p.medals[kinds[i]] = p.medals.get(kinds[i], 0) + 1
+        recipients = _owner_human_players(room, a)
+        for p in recipients:
+            p.medals[kinds[i]] = p.medals.get(kinds[i], 0) + 1
 
 
 async def _handle_kick(room: Room, target_id: str, manager: RoomManager) -> None:
@@ -1033,11 +1215,14 @@ async def _cleanup(
         return
 
     # state == "playing" or "finished": keep them in the room so they can
-    # reconnect. Game does NOT end on disconnect.
+    # reconnect. Game does NOT end on disconnect. (Bots never count as a
+    # live connection, so a room of only-bots still cleans up.)
     await broadcast(room, S.msg(S.PEER_DISCONNECTED, player_id=player.id))
 
     async with room.lock:
-        all_disc = all(not p.connected for p in room.players.values())
+        all_disc = all(
+            not p.connected for p in room.players.values() if not p.is_bot
+        )
     if all_disc:
         _schedule_room_cleanup(room, manager)
 
@@ -1046,17 +1231,23 @@ def _schedule_room_cleanup(room: Room, manager: RoomManager) -> None:
     """If everyone is disconnected, wipe the room after DISCONNECT_GRACE."""
     if room.cleanup_task and not room.cleanup_task.done():
         return  # already scheduled
-    # Stop the drought ticker while the room sits empty awaiting cleanup —
-    # nobody is connected to receive grants. It's restarted on reconnect.
+    # Stop the drought ticker + AI loops while the room sits empty awaiting
+    # cleanup — nobody is connected. They're restarted on reconnect.
     if room.drought_task and not room.drought_task.done():
         room.drought_task.cancel()
         room.drought_task = None
+    for bt in room.bot_tasks:
+        if not bt.done():
+            bt.cancel()
+    room.bot_tasks = []
 
     async def cleanup_after() -> None:
         try:
             await asyncio.sleep(DISCONNECT_GRACE)
             async with room.lock:
-                still_all_disc = all(not p.connected for p in room.players.values())
+                still_all_disc = all(
+                    not p.connected for p in room.players.values() if not p.is_bot
+                )
             if not still_all_disc:
                 return
             # End game if still playing, then drop the room

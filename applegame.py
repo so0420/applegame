@@ -20,7 +20,7 @@ def _local_ips() -> list[str]:
 
 
 if __name__ == "__main__":
-    port = 9000
+    port = 8011
     print(f"  local:    http://127.0.0.1:{port}", flush=True)
     for ip in _local_ips():
         print(f"  network:  http://{ip}:{port}", flush=True)

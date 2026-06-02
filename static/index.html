@@ -24,6 +24,7 @@
       <button class="inv-slot mobile" data-slot="0" type="button" aria-label="아이템 1"></button>
       <button class="inv-slot mobile" data-slot="1" type="button" aria-label="아이템 2"></button>
       <button class="inv-slot mobile" data-slot="2" type="button" aria-label="아이템 3"></button>
+      <button class="inv-slot mobile" data-slot="3" type="button" aria-label="아이템 4" hidden></button>
     </div>
     <div class="mobile-combo" id="mobileCombo" hidden>
       <span class="mobile-combo-default"><span data-icon="flame"></span> <span id="mobileComboCount">1</span></span>
@@ -115,11 +116,21 @@
       </div>
 
       <div class="section">
+        <h3>팀전 (2명이 한 팀)</h3>
+        <ul class="help-list">
+          <li><strong>최소 4명</strong>부터 시작 — 2명씩 <strong>무작위로 짝</strong>지어져요. 한 팀은 같은 사과 판을 <strong>함께</strong> 풀고, 점수도 팀 합산입니다.</li>
+          <li>인벤토리는 <strong>팀이 공유(4칸)</strong> — 팀원 누구나 같은 아이템을 사용/버릴 수 있어요. 공격은 <strong>상대 팀</strong>을, 방어는 <strong>우리 팀</strong>을 보호합니다.</li>
+          <li>인원이 <strong>홀수</strong>면 한 명은 <strong>🤖 AI 봇</strong>과 한 팀이 돼요. 봇은 파트너와 비슷한 속도로 사과를 깨지만, <strong>아이템은 쓰지 못합니다.</strong></li>
+          <li>친구방에서는 방장이 "팀전"을 고르고, 랜덤 매칭에서는 "팀전 (4명+)"으로 입장하면 됩니다.</li>
+        </ul>
+      </div>
+
+      <div class="section">
         <h3>사용 방법 & 제한</h3>
         <ul class="help-list">
           <li>게임 화면 상단의 인벤토리 슬롯(아이콘)을 클릭/탭하면 사용</li>
           <li>슬롯 우측 상단의 <strong>✕</strong>를 누르면 그 아이템을 <strong>버려서 슬롯을 비울 수 있어요</strong> (PC: 우클릭, 모바일: 길게 누르기도 동일)</li>
-          <li><strong>PC 단축키</strong> — 숫자 <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> 으로 1·2·3번 슬롯 사용, <kbd>Shift</kbd>+<kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> 또는 <kbd>Space</kbd>+<kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> 으로 버리기 (편한 쪽으로)</li>
+          <li><strong>PC 단축키</strong> — 숫자 <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd>(팀전은 <kbd>4</kbd>까지)으로 슬롯 사용, <kbd>Shift</kbd> 또는 <kbd>Space</kbd> + 숫자로 버리기 (편한 쪽으로)</li>
           <li>경기 종료 <strong>마지막 10초</strong>에는 공격 아이템을 쓸 수 없음 (잠금)</li>
           <li>다시보기에서도 아이템 사용·효과가 시간 순으로 재현돼요</li>
         </ul>
@@ -158,7 +169,9 @@
         <div class="modes">
           <button class="mode" data-match-variant="classic">클래식</button>
           <button class="mode secondary" data-match-variant="items">아이템전</button>
+          <button class="mode secondary" data-match-variant="team">팀전 (4명+)</button>
         </div>
+        <p class="helper">팀전은 4명 이상 모이면 2명씩 자동으로 팀이 됩니다.</p>
         <div class="lobby-actions">
           <button id="matchVariantBackBtn" class="ghost">뒤로</button>
         </div>
@@ -209,6 +222,7 @@
         <div class="variant-toggle">
           <button class="variant-btn" data-variant="classic" type="button">클래식</button>
           <button class="variant-btn active" data-variant="items" type="button">아이템전</button>
+          <button class="variant-btn" data-variant="team" type="button">팀전</button>
         </div>
         <p class="helper" id="variantHelper">아이템전: 황금 사과를 포함해 합10을 만들면 랜덤 아이템 획득</p>
       </div>
@@ -265,6 +279,7 @@
           <button class="inv-slot" data-slot="0" type="button" aria-label="아이템 슬롯 1"></button>
           <button class="inv-slot" data-slot="1" type="button" aria-label="아이템 슬롯 2"></button>
           <button class="inv-slot" data-slot="2" type="button" aria-label="아이템 슬롯 3"></button>
+          <button class="inv-slot" data-slot="3" type="button" aria-label="아이템 슬롯 4" hidden></button>
         </div>
         <div class="game-stat">
           <span class="muted">⏱</span>

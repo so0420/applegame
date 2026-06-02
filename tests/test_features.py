@@ -93,23 +93,40 @@ def test_shield_stacking_extends_duration():
 # Drought relief
 # ------------------------------------------------------------------
 
-def test_drought_relief_grants_item(monkeypatch):
-    """A player who goes DROUGHT_SECONDS without clearing is handed an item."""
-    import app.ws.handlers as handlers_mod
-    monkeypatch.setattr(handlers_mod, "DROUGHT_SECONDS", 0.4)
-    client = TestClient(app)
-    h_ctx, g_ctx, host, guest, host_id, guest_id, room_id, room = _start_items_game(client)
-    try:
-        # Don't clear anything — within ~1 tick the relief loop should fire.
-        acq = _drain_until(host, "item_acquired", limit=4)
-        assert acq["player_id"] == host_id
-        assert acq["item"] in (
-            "hint", "shuffle", "blind", "overload", "freeze", "shield",
-        )
-        assert any(s is not None for s in room.players[host_id].inventory)
-    finally:
-        h_ctx.__exit__(None, None, None)
-        g_ctx.__exit__(None, None, None)
+def test_drought_grant_pass_grants_when_stuck():
+    """A unit past DROUGHT_SECONDS with a free slot gets a tier-weighted item;
+    a unit inside the window does not. Pure pass — no timer loop / WS."""
+    from app.ws.handlers import _drought_grant_pass
+    from app.game.room import Room, Player, ITEM_KINDS
+    room = Room(id="x", mode="random", variant="items")
+    stuck = Player(id="stuck", nickname="stuck")
+    fresh = Player(id="fresh", nickname="fresh")
+    room.players = {"stuck": stuck, "fresh": fresh}
+    room.started_at = 100.0
+    stuck.drought_anchor = 100.0   # last cleared at round start
+    fresh.drought_anchor = 119.0   # cleared recently
+
+    grants = _drought_grant_pass(room, 120.0)  # 20s in
+    granted_ids = {a.id for a, _, _ in grants}
+    assert "stuck" in granted_ids       # 20s ≥ 15s → relief
+    assert "fresh" not in granted_ids   # 1s < 15s → no relief
+    actor, slot, item = next(g for g in grants if g[0].id == "stuck")
+    assert item in ITEM_KINDS
+    assert stuck.inventory[slot] == item
+    assert stuck.drought_anchor == 120.0  # clock reset
+
+
+def test_drought_grant_pass_skips_full_inventory():
+    from app.ws.handlers import _drought_grant_pass
+    from app.game.room import Room, Player
+    room = Room(id="x", mode="random", variant="items")
+    p = Player(id="p", nickname="p", inventory=["hint", "shield", "blind"])  # full (3)
+    room.players = {"p": p}
+    room.started_at = 100.0
+    p.drought_anchor = 100.0
+    grants = _drought_grant_pass(room, 130.0)
+    assert grants == []                 # no free slot → nothing granted
+    assert p.drought_anchor == 130.0    # but clock still reset (no re-spin)
 
 
 # ------------------------------------------------------------------
@@ -281,3 +298,206 @@ def test_feedback_rejects_oversized_body(monkeypatch):
     resp = client.post("/api/feedback", json={"message": huge})
     assert resp.status_code == 413
     assert resp.json()["ok"] is False
+
+
+# ------------------------------------------------------------------
+# Team mode — pure model tests (no WS / no async loops)
+# ------------------------------------------------------------------
+
+def _team_room(n_humans):
+    from app.game.room import Room, Player
+    room = Room(id="TROOM", mode="friend", variant="team")
+    for i in range(n_humans):
+        room.players[f"p{i}"] = Player(id=f"p{i}", nickname=f"p{i}")
+    room.start()
+    return room
+
+
+def test_team_formation_pairs_players():
+    room = _team_room(4)
+    assert len(room.teams) == 2
+    # Every human is assigned to exactly one team.
+    humans = {f"p{i}" for i in range(4)}
+    assert humans <= set(room.team_of.keys())
+    assert all(room.team_of[h] in room.teams for h in humans)
+    # Boards/golden/apples are keyed by team, not player.
+    assert set(room.boards.keys()) == set(room.teams.keys())
+    assert set(room.golden.keys()) == set(room.teams.keys())
+    for t in room.teams.values():
+        assert len(t.members) == 2
+        assert len(t.inventory) == 4  # shared team pool of 4
+        assert all(not m.is_bot for m in t.members)  # 4 humans → no bot
+
+
+def test_team_formation_odd_count_adds_one_bot():
+    room = _team_room(5)
+    assert len(room.teams) == 3
+    bots = [p for p in room.players.values() if p.is_bot]
+    assert len(bots) == 1
+    bot = bots[0]
+    tid = room.team_of[bot.id]
+    members = room.teams[tid].members
+    assert sum(1 for m in members if m.is_bot) == 1
+    assert sum(1 for m in members if not m.is_bot) == 1
+    # Bot is never shown in the lobby roster.
+    assert all(not p["is_bot"] for p in room.public()["players"])
+
+
+def test_team_rematch_disbands_and_drops_bot():
+    room = _team_room(5)
+    assert any(p.is_bot for p in room.players.values())
+    room.reset_for_rematch()
+    assert not room.teams
+    assert not room.team_of
+    assert not any(p.is_bot for p in room.players.values())  # bot dropped
+
+
+def test_team_determine_winner_is_a_team_id():
+    room = _team_room(4)
+    tids = list(room.teams)
+    room.teams[tids[0]].score = 30
+    room.teams[tids[1]].score = 10
+    assert room.determine_winner() == tids[0]
+
+
+def test_find_sum10_rect_finds_valid_move():
+    import random
+    from app.game.board import find_sum10_rect, ROWS, COLS
+    board = [[1] * COLS for _ in range(ROWS)]  # 1s → many sum-10 runs
+    rect = find_sum10_rect(board, random.Random(3))
+    assert rect is not None
+    r1, c1, r2, c2 = rect
+    s = sum(board[r][c] for r in range(r1, r2 + 1) for c in range(c1, c2 + 1))
+    assert s == 10
+
+
+def test_find_sum10_rect_none_when_no_move():
+    import random
+    from app.game.board import find_sum10_rect, ROWS, COLS
+    board = [[9] * COLS for _ in range(ROWS)]  # 9 alone <10, 9+9=18 >10 → no move
+    assert find_sum10_rect(board, random.Random(3)) is None
+
+
+def test_bot_delay_mirrors_partner_pace():
+    from app.ws.handlers import _bot_delay, BOT_MIN_DELAY, BOT_MAX_DELAY
+    from app.game.room import Team, Player
+    partner = Player(id="h", nickname="h")
+    # Partner cleared at a ~2.0s cadence.
+    for t in (100.0, 102.0, 104.0, 106.0):
+        partner.submit_history.append(t)
+    team = Team(id="T1", members=[partner, Player(id="b", nickname="b", is_bot=True)])
+    # 50 samples — every one inside the clamp band and near the 2.0s base.
+    delays = [_bot_delay(None, team, 110.0) for _ in range(50)]
+    assert all(BOT_MIN_DELAY <= d <= BOT_MAX_DELAY for d in delays)
+    assert 1.2 <= sum(delays) / len(delays) <= 3.5  # tracks the ~2.0s pace
+
+
+def test_player_tier_over_teams():
+    from app.ws.handlers import _player_tier
+    from app.game.room import Room, Team
+    room = Room(id="x", mode="friend", variant="team")
+    room.teams = {
+        "T1": Team(id="T1", score=20),
+        "T2": Team(id="T2", score=5),
+    }
+    assert _player_tier(room, "T1") == "top"
+    assert _player_tier(room, "T2") == "bottom"
+
+
+# ------------------------------------------------------------------
+# Team mode — WS integration (read only the actor's own messages so the
+# assertions don't depend on cross-connection delivery timing)
+# ------------------------------------------------------------------
+
+def _start_team_game(client, n=4):
+    host_ctx = client.websocket_connect("/ws")
+    host = host_ctx.__enter__()
+    host.send_json({"type": "hello", "intent": "create"})
+    hj = host.receive_json()
+    room_id = hj["room"]["id"]
+    host.send_json({"type": "set_variant", "variant": "team"})
+    host.receive_json()  # variant_changed
+    ctxs = [host_ctx]
+    wss = [host]
+    ids = [hj["player_id"]]
+    for _ in range(n - 1):
+        c = client.websocket_connect("/ws")
+        w = c.__enter__()
+        w.send_json({"type": "hello", "intent": "join", "code": room_id})
+        ids.append(w.receive_json()["player_id"])
+        host.receive_json()  # peer_joined on host
+        ctxs.append(c)
+        wss.append(w)
+    host.send_json({"type": "start"})
+    host.receive_json()  # game_start on host
+    from app.main import manager
+    return ctxs, wss, ids, manager.get(room_id)
+
+
+def test_team_submit_scores_the_team():
+    client = TestClient(app)
+    ctxs, wss, ids, room = _start_team_game(client, 4)
+    try:
+        sub, sub_id = wss[1], ids[1]
+        tid = room.team_of[sub_id]
+        team = room.teams[tid]
+        room.boards[tid] = [[1] * COLS for _ in range(ROWS)]
+        room.boards[tid][0][0] = 5
+        room.boards[tid][0][1] = 5
+        team.score = 0
+        sub.send_json({"type": "submit", "r1": 0, "c1": 0, "r2": 0, "c2": 1})
+        clear = _drain_until(sub, "clear")
+        assert clear["player_id"] == tid     # board owner = team
+        assert clear["by"] == sub_id          # acting player
+        assert team.score == 2
+        assert len(team.inventory) == 4
+    finally:
+        for c in ctxs:
+            c.__exit__(None, None, None)
+
+
+def test_team_discard_clears_shared_slot():
+    """Discard works on the shared 4-slot team inventory (incl. slot 3), and
+    the ack reaches the discarding teammate."""
+    client = TestClient(app)
+    ctxs, wss, ids, room = _start_team_game(client, 4)
+    try:
+        sub, sub_id = wss[1], ids[1]
+        team = room.teams[room.team_of[sub_id]]
+        team.inventory = ["hint", "shield", "blind", "freeze"]  # full 4
+        sub.send_json({"type": "discard_item", "slot": 3})
+        assert _drain_until(sub, "item_discarded")["slot"] == 3
+        assert team.inventory[3] is None
+        sub.send_json({"type": "discard_item", "slot": 0})
+        assert _drain_until(sub, "item_discarded")["slot"] == 0
+        assert team.inventory[0] is None
+    finally:
+        for c in ctxs:
+            c.__exit__(None, None, None)
+
+
+def test_team_min_players_enforced():
+    client = TestClient(app)
+    ctxs = []
+    try:
+        host_ctx = client.websocket_connect("/ws")
+        host = host_ctx.__enter__()
+        ctxs.append(host_ctx)
+        host.send_json({"type": "hello", "intent": "create"})
+        rid = host.receive_json()["room"]["id"]
+        host.send_json({"type": "set_variant", "variant": "team"})
+        host.receive_json()
+        # Only 3 humans total (host + 2) — below the 4 needed for teams.
+        for _ in range(2):
+            c = client.websocket_connect("/ws")
+            w = c.__enter__()
+            ctxs.append(c)
+            w.send_json({"type": "hello", "intent": "join", "code": rid})
+            w.receive_json()
+            host.receive_json()  # peer_joined
+        host.send_json({"type": "start"})
+        msg = _drain_until(host, "error")
+        assert msg["code"] == "not_ready"
+    finally:
+        for c in ctxs:
+            c.__exit__(None, None, None)

@@ -22,14 +22,18 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-_VARIANTS: tuple[RoomVariant, ...] = ("classic", "items")
+_VARIANTS: tuple[RoomVariant, ...] = ("classic", "items", "team")
 
 
 class Matchmaker:
     MIN_PLAYERS = 2
+    TEAM_MIN_PLAYERS = 4       # team mode needs at least two pairs
     MAX_PLAYERS = 7
-    WAIT_AFTER_PAIR = 20.0     # seconds after 2nd player joins
+    WAIT_AFTER_PAIR = 20.0     # seconds after the threshold is first met
     WAIT_WHEN_FULL = 5.0       # seconds once we hit MAX_PLAYERS
+
+    def _min_players(self, variant: RoomVariant) -> int:
+        return self.TEAM_MIN_PLAYERS if variant == "team" else self.MIN_PLAYERS
 
     def __init__(
         self,
@@ -83,20 +87,20 @@ class Matchmaker:
             count = len(room.players)
             if count >= self.MAX_PLAYERS:
                 self._reschedule_locked(room, variant, self.WAIT_WHEN_FULL)
-            elif count >= self.MIN_PLAYERS and self._is_idle(variant):
+            elif count >= self._min_players(variant) and self._is_idle(variant):
                 self._reschedule_locked(room, variant, self.WAIT_AFTER_PAIR)
             return room, slot["deadline_ms"]  # type: ignore[return-value]
 
     async def player_left(self, player_id: str, room: Room) -> None:
         """A player left a pending random room. Cancel countdown if we drop
-        below MIN_PLAYERS, drop the room slot entirely if it's empty."""
+        below the variant's minimum, drop the room slot if it's empty."""
         async with self._lock:
             variant = room.variant if room.variant in _VARIANTS else "classic"
             slot = self._pending[variant]
             if slot["room_id"] != room.id:
                 return  # not our pending room
             future_count = len(room.players) - (1 if player_id in room.players else 0)
-            if future_count < self.MIN_PLAYERS:
+            if future_count < self._min_players(variant):
                 self._cancel_countdown_locked(variant)
                 if future_count >= 0:
                     # Tell remaining players the timer's off

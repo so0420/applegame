@@ -78,7 +78,51 @@ const state = {
   // True when watching a friend room we joined mid-round. No board of our
   // own; input is disabled and we get promoted to a player next lobby.
   isSpectator: false,
+  // Team mode: the board OWNER for the local player. In team mode this is
+  // the team id (teammates share it); otherwise it equals playerId. All
+  // board / score / effect ownership checks key on ownerId.
+  ownerId: null,
+  teams: null,   // [{id, members:[{id,nickname,is_bot}]}, ...] in team mode
 };
+
+// Owner id for a player id: their team in team mode, else the player itself.
+function ownerOf(playerId) {
+  if (state.variant === "team" && Array.isArray(state.teams)) {
+    const t = state.teams.find((tm) => tm.members.some((m) => m.id === playerId));
+    if (t) return t.id;
+  }
+  return playerId;
+}
+
+// The leaderboard "units" — teams in team mode, else players. Each entry:
+// {id, name, members:[playerId...], isMe}.
+function leaderboardUnits() {
+  if (state.variant === "team" && Array.isArray(state.teams)) {
+    return state.teams.map((t) => ({
+      id: t.id,
+      name: t.members.map((m) => m.nickname).join(" & "),
+      members: t.members.map((m) => m.id),
+      isMe: t.id === state.ownerId,
+    }));
+  }
+  const players = state.room?.players ?? [];
+  return players.map((p) => ({
+    id: p.id,
+    name: p.nickname,
+    members: [p.id],
+    isMe: p.id === state.playerId,
+  }));
+}
+
+// Display name for a board owner id (team name or player nickname).
+function ownerName(ownerId) {
+  const u = leaderboardUnits().find((x) => x.id === ownerId);
+  return u ? u.name : "?";
+}
+
+// Inventory capacity: 4 shared slots in team mode, else 3.
+function invSize() { return state.variant === "team" ? 4 : 3; }
+function invSlots() { return new Array(invSize()).fill(null); }
 
 // `role` groups items for the help screen: self (자기 강화) / attack (공격)
 // / defense (방어). Display order below is the order shown in help.
@@ -135,7 +179,7 @@ attachDragInput(canvas, state.bigRenderer, {
       sumBadge.hidden = true;
       return;
     }
-    if (state.focusedPlayerId !== state.playerId) return; // viewing only
+    if (state.focusedPlayerId !== state.ownerId) return; // viewing only
     if (state.startedAt && Date.now() < state.startedAt) {
       sumBadge.hidden = true;
       return;  // pre-game countdown — drags don't fire
@@ -157,14 +201,14 @@ attachDragInput(canvas, state.bigRenderer, {
         sumBadge.style.top = center.y + "px";
       }
     }
-    // Mirror onto my own mini so the leaderboard shows my live drag
-    state.miniRenderers.get(state.playerId)?.setMyDrag(rect);
+    // Mirror onto my own (team's) mini so the leaderboard shows my live drag
+    state.miniRenderers.get(state.ownerId)?.setMyDrag(rect);
   },
   onSubmit: (rect) => {
     sumBadge.hidden = true;
     if (state.replayActive) return;
     if (isRoundOver() || isFrozen()) return;
-    if (state.focusedPlayerId !== state.playerId) return;
+    if (state.focusedPlayerId !== state.ownerId) return;
     if (state.startedAt && Date.now() < state.startedAt) return;
 
     // Tally the rect locally first. If it doesn't sum to 10, don't even
@@ -193,7 +237,7 @@ attachDragInput(canvas, state.bigRenderer, {
     // can still happen if the client's board view is stale vs server).
     const arr = cellsWithValue.map((c) => [c.r, c.c]);
     state.bigRenderer.clearCells(arr);
-    state.miniRenderers.get(state.playerId)?.clearCells(arr);
+    state.miniRenderers.get(state.ownerId)?.clearCells(arr);
     state._pendingSubmits.push({ cells: cellsWithValue, applied: true });
     state.ws?.send("submit", rect);
   },
@@ -285,7 +329,8 @@ document.querySelectorAll(".mode").forEach((btn) => {
 // Random-match variant pickers
 document.querySelectorAll("[data-match-variant]").forEach((btn) => {
   btn.addEventListener("click", async () => {
-    const variant = btn.dataset.matchVariant === "items" ? "items" : "classic";
+    const v = btn.dataset.matchVariant;
+    const variant = (v === "items" || v === "team") ? v : "classic";
     await startSession("match", null, variant);
   });
 });
@@ -446,8 +491,8 @@ function discardSlot(slot) {
 // Use the item in `slot`, applying the same guards as a slot click
 // (shared by the click handler and the number-key hotkeys).
 function useItemSlot(slot) {
-  if (!Number.isInteger(slot) || slot < 0 || slot > 2) return;
-  if (state.variant !== "items" || state.isSpectator) return;
+  if (!Number.isInteger(slot) || slot < 0 || slot >= invSize()) return;
+  if ((state.variant !== "items" && state.variant !== "team") || state.isSpectator) return;
   const item = state.inventory[slot];
   if (!item) return;
   if (state.replayActive || isRoundOver()) return;
@@ -552,12 +597,14 @@ const HOTKEY_SLOT = {
   Digit1: 0, Numpad1: 0,
   Digit2: 1, Numpad2: 1,
   Digit3: 2, Numpad3: 2,
+  Digit4: 3, Numpad4: 3,   // 4th slot — team mode only
 };
 let spaceHeld = false;
 function onItemsGameScreen() {
   const tag = (document.activeElement?.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea") return false;  // don't hijack typing
-  return !screens.game.hidden && state.variant === "items" && !state.isSpectator;
+  const itemy = state.variant === "items" || state.variant === "team";
+  return !screens.game.hidden && itemy && !state.isSpectator;
 }
 window.addEventListener("keydown", (e) => {
   if (e.code === "Space") {
@@ -634,7 +681,8 @@ function triggerRematch() {
     // Random rooms have no host and don't reuse the room — push the
     // player straight back into matchmaking with the same variant, as if
     // they had hit "랜덤 매칭" from the home screen again.
-    const variant = state.variant === "items" ? "items" : "classic";
+    const variant = (state.variant === "items" || state.variant === "team")
+      ? state.variant : "classic";
     audio.stopBgm();
     if (state._bgmStartTimer) {
       clearTimeout(state._bgmStartTimer);
@@ -827,6 +875,8 @@ function resetState() {
   state.gameWinnerId = null;
   state.matchDeadlineMs = null;
   state.variant = "classic";
+  state.teams = null;
+  state.ownerId = null;
   state.inventory = [null, null, null];
   state.effects = { shield: 0, blind: 0, hint: 0, overload: 0, freeze: 0 };
   state.initialGolden = [];
@@ -958,9 +1008,9 @@ function bindSocket(ws) {
     state.events.push({
       kind: "item_used", t_ms: t_ms ?? 0, by, item, target_id, blocked: !!blocked,
     });
-    // Server clears the slot — mirror that locally so the inventory UI
-    // empties immediately for the player who triggered the use.
-    if (by === state.playerId && typeof slot === "number") {
+    // Server clears the slot — mirror that locally. In team mode the
+    // inventory is shared, so a teammate's use empties the slot for me too.
+    if (typeof slot === "number" && ownerOf(by) === state.ownerId) {
       state.inventory[slot] = null;
       renderInventory();
     }
@@ -1082,11 +1132,12 @@ function bindSocket(ws) {
   });
 
   ws.addEventListener("msg:peer_drag", (e) => {
-    const { player_id, r1, c1, r2, c2 } = e.detail;
-    if (player_id === state.playerId) return;
+    const { player_id, owner_id, r1, c1, r2, c2 } = e.detail;
+    if (player_id === state.playerId) return;  // never echo my own
+    const oid = owner_id ?? player_id;          // board this drag draws on
     const rect = { r1, c1, r2, c2 };
-    state.miniRenderers.get(player_id)?.setMyDrag(rect);
-    if (player_id === state.focusedPlayerId) {
+    state.miniRenderers.get(oid)?.setMyDrag(rect);
+    if (oid === state.focusedPlayerId) {
       state.bigRenderer.setMyDrag(rect);
     }
     // Self-heal: if a peer submits something invalid (server rejects)
@@ -1095,39 +1146,48 @@ function bindSocket(ws) {
     // after a few seconds with no update; the next drag_update will
     // reset the timer.
     if (!state._peerDragTimers) state._peerDragTimers = new Map();
-    const prev = state._peerDragTimers.get(player_id);
+    const prev = state._peerDragTimers.get(oid);
     if (prev) clearTimeout(prev);
-    state._peerDragTimers.set(player_id, setTimeout(() => {
-      state.miniRenderers.get(player_id)?.setMyDrag(null);
-      if (player_id === state.focusedPlayerId) state.bigRenderer.setMyDrag(null);
-      state._peerDragTimers?.delete(player_id);
+    state._peerDragTimers.set(oid, setTimeout(() => {
+      state.miniRenderers.get(oid)?.setMyDrag(null);
+      if (oid === state.focusedPlayerId) state.bigRenderer.setMyDrag(null);
+      state._peerDragTimers?.delete(oid);
     }, 2500));
   });
 
   ws.addEventListener("msg:clear", (e) => {
-    const { cells, scores, player_id, t_ms, combo, combo_triggered } = e.detail;
+    const { cells, scores, player_id, by, t_ms, combo, combo_triggered } = e.detail;
+    // player_id is the board OWNER (team id in team mode); `by` is the actor.
     state.events.push({ kind: "clear", t_ms: t_ms ?? 0, player_id, cells });
-    if (player_id === state.playerId && state.variant === "items") {
+    const isMyBoard = player_id === state.ownerId;
+    const iSubmitted = by === undefined ? player_id === state.playerId : by === state.playerId;
+    if (isMyBoard && (state.variant === "items" || state.variant === "team")) {
       setCombo(combo ?? 0, !!combo_triggered);
     }
-    if (player_id === state.playerId) {
-      // Server confirmation of my own submit. Pop the matching pending
-      // entry; only re-apply if it wasn't done optimistically already.
+    if (iSubmitted) {
+      // Server confirmation of MY own submit. Pop the matching pending entry;
+      // only re-apply if it wasn't done optimistically already.
       const pending = state._pendingSubmits.shift();
       if (!pending?.applied) {
         state.bigRenderer.clearCells(cells);
         state.miniRenderers.get(player_id)?.clearCells(cells);
       }
       state.miniRenderers.get(player_id)?.setMyDrag(null);
-      state.bigRenderer.setMyDrag(null);
+      if (isMyBoard) state.bigRenderer.setMyDrag(null);
       audio.clearSfx(cells?.length ?? 0);
     } else {
+      // Someone else cleared: a teammate/bot on MY shared board, or another
+      // unit's board entirely.
       const mini = state.miniRenderers.get(player_id);
       if (mini) {
         mini.clearCells(cells);
         mini.setMyDrag(null);
       }
-      if (player_id === state.focusedPlayerId) {
+      if (isMyBoard) {
+        // Teammate / AI cleared on my team's board — mirror onto big board.
+        state.bigRenderer.clearCells(cells);
+        audio.clearSfx(cells?.length ?? 0);
+      } else if (player_id === state.focusedPlayerId) {
         state.bigRenderer.clearCells(cells);
         state.bigRenderer.setMyDrag(null);
       }
@@ -1147,7 +1207,7 @@ function bindSocket(ws) {
     const pending = state._pendingSubmits.shift();
     if (pending?.applied && pending.cells.length > 0) {
       state.bigRenderer.restoreCells(pending.cells);
-      state.miniRenderers.get(state.playerId)?.restoreCells(pending.cells);
+      state.miniRenderers.get(state.ownerId)?.restoreCells(pending.cells);
       updateNoMoves();
     }
   });
@@ -1194,30 +1254,35 @@ function onReconnected(m) {
   state.initialBoard = m.initial_board ? m.initial_board.map((row) => row.slice()) : null;
 
   const me = m.room.players.find((p) => p.id === state.playerId);
-  if (me) {
-    state.myName = me.nickname;
-    state.inventory = Array.isArray(me.inventory)
-      ? [me.inventory[0] ?? null, me.inventory[1] ?? null, me.inventory[2] ?? null]
-      : [null, null, null];
-    setCombo(typeof me.combo === "number" ? me.combo : 0);
+  if (me) state.myName = me.nickname;
+  // Inventory + combo come from my OWNER (team in team mode, else me).
+  const myUnit = state.variant === "team"
+    ? (state.teams || []).find((t) => t.id === state.ownerId)
+    : me;
+  if (myUnit) {
+    state.inventory = Array.isArray(myUnit.inventory)
+      ? myUnit.inventory.slice(0, invSize())
+      : invSlots();
+    while (state.inventory.length < invSize()) state.inventory.push(null);
+    setCombo(typeof myUnit.combo === "number" ? myUnit.combo : 0);
   }
   renderInventory();
   state.initialGolden = Array.isArray(m.initial_golden)
     ? m.initial_golden.map(([r, c]) => [r, c])
     : [];
 
-  // Build leaderboard, then set each player's current board state
+  // Build leaderboard, then set each owner's current board state
   buildLeaderboard();
   if (m.boards) {
-    for (const [pid, board] of Object.entries(m.boards)) {
-      const mini = state.miniRenderers.get(pid);
+    for (const [oid, board] of Object.entries(m.boards)) {
+      const mini = state.miniRenderers.get(oid);
       if (mini) mini.setBoard(board);
     }
   }
-  // Re-stamp goldens that are still in play. Server sends a per-player
+  // Re-stamp goldens that are still in play. Server sends a per-owner
   // dict so partial pickups are honoured rather than reset to the
   // initial set.
-  if (state.variant === "items" && m.golden && typeof m.golden === "object") {
+  if ((state.variant === "items" || state.variant === "team") && m.golden && typeof m.golden === "object") {
     for (const [pid, cells] of Object.entries(m.golden)) {
       const renderer = state.miniRenderers.get(pid);
       if (!renderer) continue;
@@ -1225,15 +1290,17 @@ function onReconnected(m) {
       for (const [r, c] of cells) renderer.setGolden(r, c, true);
     }
   }
-  // Restore focus to me — also copies my current board onto the big
-  // renderer and (critically) re-enables drag input which is gated by
-  // focusedPlayerId === playerId.
-  setFocusedPlayer(state.playerId, /*forceCopy*/ true);
-  // Mark currently disconnected peers
-  for (const p of m.room.players) {
-    if (p.connected === false) {
-      const item = state.lbItems.get(p.id);
-      if (item) item.li.classList.add("disconnected");
+  // Restore focus to my own board — also copies it onto the big renderer
+  // and (critically) re-enables drag input which is gated by
+  // focusedPlayerId === ownerId.
+  setFocusedPlayer(state.ownerId, /*forceCopy*/ true);
+  // Mark currently disconnected peers (non-team only; team rows are shared).
+  if (state.variant !== "team") {
+    for (const p of m.room.players) {
+      if (p.connected === false) {
+        const item = state.lbItems.get(p.id);
+        if (item) item.li.classList.add("disconnected");
+      }
     }
   }
   reorderAndRankLeaderboard();
@@ -1267,7 +1334,7 @@ function onReconnected(m) {
 // maybeShowStartCountdown() so the countdown's number-reveal doesn't wipe a
 // genuinely-active blind.
 function reapplyOpenEffects() {
-  if (state.variant !== "items") return;
+  if (state.variant !== "items" && state.variant !== "team") return;
   const nowMs = Date.now();
   const open = new Map();  // "target_id|effect" -> effect_start event
   for (const ev of state.events) {
@@ -1305,20 +1372,20 @@ function onSpectate(m) {
 
   buildLeaderboard();
   if (m.boards) {
-    for (const [pid, board] of Object.entries(m.boards)) {
-      state.miniRenderers.get(pid)?.setBoard(board);
+    for (const [oid, board] of Object.entries(m.boards)) {
+      state.miniRenderers.get(oid)?.setBoard(board);
     }
   }
-  if (state.variant === "items" && m.golden && typeof m.golden === "object") {
-    for (const [pid, cells] of Object.entries(m.golden)) {
-      const renderer = state.miniRenderers.get(pid);
+  if ((state.variant === "items" || state.variant === "team") && m.golden && typeof m.golden === "object") {
+    for (const [oid, cells] of Object.entries(m.golden)) {
+      const renderer = state.miniRenderers.get(oid);
       if (!renderer) continue;
       renderer.clearGolden();
       for (const [r, c] of cells) renderer.setGolden(r, c, true);
     }
   }
-  // Focus the first player so the big board shows a live game.
-  const firstId = state.room?.players?.[0]?.id;
+  // Focus the first unit so the big board shows a live game.
+  const firstId = leaderboardUnits()[0]?.id;
   if (firstId) setFocusedPlayer(firstId, /*forceCopy*/ true);
 
   reorderAndRankLeaderboard();
@@ -1348,13 +1415,17 @@ function onSpectate(m) {
 
 // ---- Inventory / toast / effects ----
 function renderInventory() {
-  const visible = state.variant === "items";
+  const visible = state.variant === "items" || state.variant === "team";
   $("inventory").hidden = !visible;
   $("mobileInventory").hidden = !visible;
+  const cap = invSize();   // 4 in team mode, else 3
   const remaining = state.endsAt ? state.endsAt - Date.now() : 0;
   const locked = remaining > 0 && remaining <= 10_000;
   for (const btn of document.querySelectorAll(".inv-slot")) {
     const slot = parseInt(btn.dataset.slot, 10);
+    // The 4th slot only exists in team mode.
+    if (slot >= cap) { btn.hidden = true; btn.classList.remove("has-item", "locked", "item-self", "item-attack", "item-defense"); btn.innerHTML = ""; continue; }
+    btn.hidden = false;
     const item = state.inventory[slot];
     btn.classList.remove("item-self", "item-attack", "item-defense");
     if (item && ITEM_META[item]) {
@@ -1451,15 +1522,15 @@ function showItemUsedToast(by, item, target_id, blocked = false) {
   const blockSuffix = blocked ? ` ${shieldTag}<span>방어됨</span>` : "";
   if (by === state.playerId) {
     showItemToast(labelWithIcon(item, `${meta.label} 사용`) + blockSuffix);
-  } else if (target_id === state.playerId && meta.attack) {
+  } else if (target_id === state.ownerId && meta.attack) {
+    // My (team's) board is the target.
     if (blocked) {
       showItemToast(`${shieldTag}<span>${byName}님의 ${meta.label} 방어!</span>`);
     } else {
       showAttackToast(labelWithIcon(item, `${byName}님이 ${meta.label}!`));
     }
   } else if (meta.attack && target_id) {
-    const target = state.room?.players.find((p) => p.id === target_id);
-    const tName = escapeHtml(target?.nickname ?? "?");
+    const tName = escapeHtml(ownerName(target_id));
     showItemToast(labelWithIcon(item, `${byName} → ${tName} (${meta.label})`) + blockSuffix);
   } else if (meta.role === "defense" && by !== state.playerId) {
     // Surface opponents' shields too, so attackers see who just walled up.
@@ -1477,21 +1548,22 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
   const remainingMs = (until_ms ?? Date.now()) - Date.now();
   // Shield shows on the leaderboard for everyone, not just me.
   if (effect === "shield") setLeaderboardShield(target_id, true);
-  if (target_id === state.playerId) {
+  const mine = target_id === state.ownerId;   // my (team's) board
+  if (mine) {
     if (effect === "shield") {
       state.effects.shield = until_ms;
       showBoardEffect("shield", remainingMs);
     } else if (effect === "blind") {
       state.effects.blind = until_ms;
       state.bigRenderer.setBlind(true);
-      state.miniRenderers.get(state.playerId)?.setBlind(true);
+      state.miniRenderers.get(state.ownerId)?.setBlind(true);
       // Hide any sum badge from an in-progress drag started before blind hit.
       sumBadge.hidden = true;
       showBoardEffect("blind", remainingMs);
     } else if (effect === "overload") {
       state.effects.overload = until_ms;
       state.bigRenderer.setOverload(true);
-      state.miniRenderers.get(state.playerId)?.setOverload(true);
+      state.miniRenderers.get(state.ownerId)?.setOverload(true);
       sumBadge.hidden = true;
       showBoardEffect("overload", remainingMs);
     } else if (effect === "freeze") {
@@ -1499,12 +1571,12 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
       // Kill any in-progress drag so the lock feels immediate.
       sumBadge.hidden = true;
       state.bigRenderer.setMyDrag(null);
-      state.miniRenderers.get(state.playerId)?.setMyDrag(null);
+      state.miniRenderers.get(state.ownerId)?.setMyDrag(null);
       showBoardEffect("freeze", remainingMs);
     } else if (effect === "hint" && Array.isArray(hint)) {
       const cells = hint.map((h) => [h.r, h.c]);
       state.bigRenderer.setHint(cells);
-      state.miniRenderers.get(state.playerId)?.setHint(cells);
+      state.miniRenderers.get(state.ownerId)?.setHint(cells);
     }
   } else if (effect === "blind") {
     const mini = state.miniRenderers.get(target_id);
@@ -1517,32 +1589,33 @@ function applyEffectStart(target_id, effect, until_ms, hint) {
 
 function applyEffectEnd(target_id, effect) {
   if (effect === "shield") setLeaderboardShield(target_id, false);
-  if (effect === "shield" && target_id === state.playerId) {
+  const mine = target_id === state.ownerId;
+  if (effect === "shield" && mine) {
     state.effects.shield = 0;
     hideBoardEffect("shield");
   } else if (effect === "blind") {
-    if (target_id === state.playerId) state.effects.blind = 0;
+    if (mine) state.effects.blind = 0;
     const mini = state.miniRenderers.get(target_id);
     mini?.setBlind(false);
-    if (target_id === state.focusedPlayerId || target_id === state.playerId) {
+    if (target_id === state.focusedPlayerId || mine) {
       state.bigRenderer.setBlind(false);
     }
-    if (target_id === state.playerId) hideBoardEffect("blind");
+    if (mine) hideBoardEffect("blind");
   } else if (effect === "overload") {
-    if (target_id === state.playerId) state.effects.overload = 0;
+    if (mine) state.effects.overload = 0;
     state.miniRenderers.get(target_id)?.setOverload(false);
-    if (target_id === state.focusedPlayerId || target_id === state.playerId) {
+    if (target_id === state.focusedPlayerId || mine) {
       state.bigRenderer.setOverload(false);
     }
-    if (target_id === state.playerId) hideBoardEffect("overload");
+    if (mine) hideBoardEffect("overload");
   } else if (effect === "freeze") {
-    if (target_id === state.playerId) {
+    if (mine) {
       state.effects.freeze = 0;
       hideBoardEffect("freeze");
     }
   } else if (effect === "hint") {
     state.bigRenderer.setHint(null);
-    state.miniRenderers.get(state.playerId)?.setHint(null);
+    state.miniRenderers.get(state.ownerId)?.setHint(null);
   }
 }
 
@@ -1553,7 +1626,7 @@ function applyShuffle(target_id, board, animate) {
     state.bigRenderer.setBoard(board);
     if (animate) state.bigRenderer.shakeOnce?.();
   }
-  if (target_id === state.playerId) {
+  if (target_id === state.ownerId) {
     state.bigRenderer.shakeOnce?.();
     if (animate) {
       showBoardEffect("shuffle", 600);
@@ -1701,7 +1774,10 @@ function onGameStart(m) {
   state.startedAt = state.endsAt - GAME_DURATION_MS;
   state.events = [];
   state.variant = m.variant || state.variant || "classic";
-  state.inventory = [null, null, null];
+  // Team structure + my board owner (team id, or my player id otherwise).
+  state.teams = Array.isArray(m.teams) ? m.teams : null;
+  state.ownerId = ownerOf(state.playerId);
+  state.inventory = invSlots();
   state.effects = { shield: 0, blind: 0, hint: 0, overload: 0, freeze: 0 };
   renderInventory();
   // Match countdown done — clear it
@@ -1715,7 +1791,7 @@ function onGameStart(m) {
     ? m.golden.map(([r, c]) => [r, c])
     : [];
   state.scores = {};
-  for (const p of state.room?.players ?? []) state.scores[p.id] = 0;
+  for (const u of leaderboardUnits()) state.scores[u.id] = 0;
   state.gameWinnerId = null;
   // Hide result banner if it was visible from a prior round
   $("resultBanner").hidden = true;
@@ -1733,9 +1809,9 @@ function onGameStart(m) {
 
   buildLeaderboard();
   // Stamp the shared golden positions onto every renderer once minis exist
-  if (state.variant === "items") applyInitialGoldenToAll();
-  // Default focus = me
-  setFocusedPlayer(state.playerId, /*forceCopy*/ false);
+  if (state.variant === "items" || state.variant === "team") applyInitialGoldenToAll();
+  // Default focus = my (team's) board
+  setFocusedPlayer(state.ownerId, /*forceCopy*/ false);
   reorderAndRankLeaderboard();
 
   show("game");
@@ -1828,6 +1904,9 @@ function onRoomUpdate(room) {
   state.hostId = room.host_id;
   state.mode = room.mode;
   state.variant = room.variant || "classic";
+  // Teams come on the snapshot during a live team round (empty in the lobby).
+  state.teams = (Array.isArray(room.teams) && room.teams.length) ? room.teams : null;
+  state.ownerId = ownerOf(state.playerId);
   $("roomCode").textContent = room.id;
   $("roomCodeSection").hidden = (room.mode === "solo" || room.mode === "random");
   renderLobby();
@@ -1908,7 +1987,8 @@ function renderLobby() {
   const cap = state.room.capacity ?? 2;
   $("playerCount").textContent = `${cnt} / ${cap}`;
   const isHost = iAmHost;
-  const canStart = state.mode === "friend" && isHost && cnt >= 2;
+  const minToStart = state.variant === "team" ? 4 : 2;  // teams need 2 pairs
+  const canStart = state.mode === "friend" && isHost && cnt >= minToStart;
   $("startBtn").hidden = !canStart;
 
   // Capacity section: visible only in friend mode
@@ -1933,7 +2013,12 @@ function renderLobby() {
       b.classList.toggle("active", b.dataset.variant === state.variant);
       b.disabled = !isHost;
     });
-    if (isHost && state.variant === "items") {
+    const variantKo = { classic: "클래식", items: "아이템전", team: "팀전" };
+    if (isHost && state.variant === "team") {
+      $("variantHelper").innerHTML =
+        "<strong>팀전</strong> — 최소 4명. 2명씩 한 팀이 되어 같은 보드를 함께 풀어요. " +
+        "인벤토리는 팀이 공유(4칸), 홀수면 한 명은 🤖 AI 봇과 한 팀이 됩니다.";
+    } else if (isHost && state.variant === "items") {
       const chips = ITEM_ORDER
         .map((k) => `<span class="ico">${icon(k)}</span>`)
         .join(" ");
@@ -1941,8 +2026,8 @@ function renderLobby() {
         `황금 사과를 합10에 포함시키면 랜덤 아이템 (${chips}) 획득`;
     } else {
       $("variantHelper").textContent = isHost
-        ? "원하면 아이템전으로 바꿔보세요"
-        : `호스트가 모드를 정합니다 (현재 ${state.variant === "items" ? "아이템전" : "클래식"})`;
+        ? "원하면 아이템전 / 팀전으로 바꿔보세요"
+        : `호스트가 모드를 정합니다 (현재 ${variantKo[state.variant] || "클래식"})`;
     }
   }
 
@@ -1950,8 +2035,10 @@ function renderLobby() {
   // renderLobby's player loop — nothing extra to do here for random.
 
   if (state.mode === "friend") {
-    if (cnt < 2) {
-      $("lobbyMsg").textContent = "친구에게 코드 또는 초대 링크를 공유하세요.";
+    if (cnt < minToStart) {
+      $("lobbyMsg").textContent = state.variant === "team"
+        ? `팀전은 최소 4명이 필요해요. 친구에게 코드/링크를 공유하세요. (${cnt}/4)`
+        : "친구에게 코드 또는 초대 링크를 공유하세요.";
     } else if (isHost) {
       $("lobbyMsg").textContent = cnt < cap
         ? "지금 시작하거나 더 기다릴 수 있어요."
@@ -1960,8 +2047,9 @@ function renderLobby() {
       $("lobbyMsg").textContent = "방장이 시작하기를 기다리는 중…";
     }
   } else if (state.mode === "random") {
-    if (cnt < 2) {
-      $("lobbyMsg").textContent = `상대를 기다리는 중... (${cnt}/${cap})`;
+    const minMatch = state.variant === "team" ? 4 : 2;
+    if (cnt < minMatch) {
+      $("lobbyMsg").textContent = `상대를 기다리는 중... (${cnt}/${minMatch})`;
     } else if (state.matchDeadlineMs) {
       const remaining = Math.max(0, state.matchDeadlineMs - Date.now());
       const sec = Math.ceil(remaining / 1000);
@@ -2000,20 +2088,22 @@ function buildLeaderboard() {
   for (const r of state.miniRenderers.values()) r.dispose?.();
   state.miniRenderers.clear();
   state.lbItems.clear();
-  const players = state.room?.players ?? [];
-  for (const p of players) {
+  // One row per "unit": a team in team mode, otherwise a player. The unit
+  // id is the board owner id everything else keys on.
+  const units = leaderboardUnits();
+  for (const u of units) {
     const li = document.createElement("li");
     li.className = "lb-item";
-    if (p.id === state.playerId) li.classList.add("me");
-    li.dataset.playerId = p.id;
+    if (u.isMe) li.classList.add("me");
+    li.dataset.ownerId = u.id;
 
     const rankEl = document.createElement("span");
     rankEl.className = "lb-rank";
     rankEl.textContent = "#-";
     const nameEl = document.createElement("span");
     nameEl.className = "lb-name";
-    nameEl.textContent = p.nickname + (p.id === state.playerId ? " (me)" : "");
-    // Shield indicator — shown while this player has an active shield.
+    nameEl.textContent = u.name + (u.isMe ? " (me)" : "");
+    // Shield indicator — shown while this unit has an active shield.
     const shieldEl = document.createElement("span");
     shieldEl.className = "lb-shield";
     shieldEl.title = "방어 중";
@@ -2032,15 +2122,15 @@ function buildLeaderboard() {
     li.append(row, c);
     ul.appendChild(li);
 
-    li.addEventListener("click", () => setFocusedPlayer(p.id));
+    li.addEventListener("click", () => setFocusedPlayer(u.id));
 
     const renderer = new BoardRenderer(c, { mini: true });
     if (state.initialBoard) renderer.setBoard(state.initialBoard);
-    state.miniRenderers.set(p.id, renderer);
-    state.lbItems.set(p.id, { li, rankEl, nameEl, scoreEl, shieldEl });
+    state.miniRenderers.set(u.id, renderer);
+    state.lbItems.set(u.id, { li, rankEl, nameEl, scoreEl, shieldEl });
   }
-  $("lbCount").textContent = String(players.length);
-  $("totalPlayers").textContent = String(players.length);
+  $("lbCount").textContent = String(units.length);
+  $("totalPlayers").textContent = String(units.length);
 }
 
 function setFocusedPlayer(pid, forceCopy = true) {
@@ -2065,14 +2155,13 @@ function setFocusedPlayer(pid, forceCopy = true) {
       }
     }
   }
-  // Label only when looking at someone else
+  // Label only when looking at another unit's board (not my own).
   const label = $("focusLabel");
-  if (pid === state.playerId) {
+  if (pid === state.ownerId) {
     label.hidden = true;
     label.classList.remove("viewing");
   } else {
-    const player = state.room?.players.find((p) => p.id === pid);
-    label.textContent = `${player?.nickname ?? "?"}의 보드`;
+    label.textContent = `${ownerName(pid)}의 보드`;
     label.hidden = false;
     label.classList.add("viewing");
   }
@@ -2083,25 +2172,25 @@ function setFocusedPlayer(pid, forceCopy = true) {
 
 function reorderAndRankLeaderboard(scoresOverride = null) {
   const scores = scoresOverride || state.scores;
-  const players = state.room?.players ?? [];
-  // Sort by score desc, tiebreak by nickname for stability
-  const ranked = players.slice().sort((a, b) => {
+  // Rank by unit (team or player); scores are keyed by owner id.
+  const units = leaderboardUnits();
+  const ranked = units.slice().sort((a, b) => {
     const da = scores[a.id] || 0;
     const db = scores[b.id] || 0;
     if (db !== da) return db - da;
-    return a.nickname.localeCompare(b.nickname);
+    return a.name.localeCompare(b.name);
   });
-  ranked.forEach((p, idx) => {
-    const item = state.lbItems.get(p.id);
+  ranked.forEach((u, idx) => {
+    const item = state.lbItems.get(u.id);
     if (!item) return;
     item.li.style.order = String(idx);
     item.rankEl.textContent = `#${idx + 1}`;
-    item.scoreEl.textContent = String(scores[p.id] || 0);
-    if (p.id === state.playerId) {
+    item.scoreEl.textContent = String(scores[u.id] || 0);
+    if (u.id === state.ownerId) {
       $("myRank").textContent = `#${idx + 1}`;
-      $("myScoreNum").textContent = String(scores[p.id] || 0);
-      $("miniScore").textContent = String(scores[p.id] || 0);
-      state.myScore = scores[p.id] || 0;
+      $("myScoreNum").textContent = String(scores[u.id] || 0);
+      $("miniScore").textContent = String(scores[u.id] || 0);
+      state.myScore = scores[u.id] || 0;
     }
   });
 }
@@ -2124,7 +2213,7 @@ function startTimer() {
     el.classList.toggle("danger", sec <= 10);
     $("miniTimer").textContent = text;
     // Refresh inventory lock state when we cross the 10s threshold
-    if (state.variant === "items") {
+    if (state.variant === "items" || state.variant === "team") {
       const locked = remaining > 0 && remaining <= 10_000;
       if (locked !== prevLocked) {
         prevLocked = locked;
@@ -2193,8 +2282,9 @@ function showResult(detail) {
   } else if (winner_id === null || winner_id === undefined) {
     title = "무승부 🤝";
     subtitle = replaySub;
-  } else if (winner_id === state.playerId) {
-    title = "승리! 🎉";
+  } else if (winner_id === state.ownerId) {
+    // winner_id is a team id in team mode, else a player id — ownerId matches both.
+    title = state.variant === "team" ? "우리 팀 승리! 🎉" : "승리! 🎉";
     subtitle = replaySub;
   } else {
     title = "패배 😢";
@@ -2251,7 +2341,7 @@ function startReplay() {
   state.replayPaused = false;
   state.replayTime = 0;
   state.replayCumScores = {};
-  for (const p of state.room?.players ?? []) state.replayCumScores[p.id] = 0;
+  for (const u of leaderboardUnits()) state.replayCumScores[u.id] = 0;
 
   // Reset boards to initial state
   state.bigRenderer.setBoard(state.initialBoard);
@@ -2265,7 +2355,7 @@ function startReplay() {
   clearAllEffectVisuals();
   // Goldens were set at game start, not as events, so re-stamp them
   // so the replay starts from the true initial visual state.
-  if (state.variant === "items") applyInitialGoldenToAll();
+  if (state.variant === "items" || state.variant === "team") applyInitialGoldenToAll();
   state.scores = { ...state.replayCumScores };
   reorderAndRankLeaderboard();
 
@@ -2371,9 +2461,9 @@ function replaySeekTo(targetMs) {
     state.bigRenderer.setBoard(state.initialBoard);
     for (const r of state.miniRenderers.values()) r.setBoard(state.initialBoard);
     clearAllEffectVisuals();
-    if (state.variant === "items") applyInitialGoldenToAll();
+    if (state.variant === "items" || state.variant === "team") applyInitialGoldenToAll();
     state.replayCumScores = {};
-    for (const p of state.room?.players ?? []) state.replayCumScores[p.id] = 0;
+    for (const u of leaderboardUnits()) state.replayCumScores[u.id] = 0;
     state.scores = { ...state.replayCumScores };
     applyReplayEventsBetween(0, targetMs, /*animate*/ false);
   }
